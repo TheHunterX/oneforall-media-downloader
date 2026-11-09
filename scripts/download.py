@@ -34,19 +34,20 @@ def sanitize_url(raw_url: str) -> str:
     return raw_url
 
 def check_warp_proxy() -> str | None:
-    """Check if the local Cloudflare WARP proxy (wireproxy) is running on port 8080."""
-    try:
-        req = urllib.request.Request("http://127.0.0.1:8080", headers={"User-Agent": "curl/7.68.0"})
-        # Simple test connection
-        proxy_support = urllib.request.ProxyHandler({'http': 'http://127.0.0.1:8080', 'https': 'http://127.0.0.1:8080'})
-        opener = urllib.request.build_opener(proxy_support)
-        with opener.open("https://www.cloudflare.com/cdn-cgi/trace", timeout=4) as resp:
-            data = resp.read().decode('utf-8')
-            if "warp=on" in data or "ip=" in data:
-                log("Cloudflare WARP Wireproxy tunnel verified active on 127.0.0.1:8080!")
-                return "http://127.0.0.1:8080"
-    except Exception as e:
-        log(f"WARP Proxy check notice: {e}")
+    """Check if the local Cloudflare WARP proxy (wireproxy) is running on port 8080 or 1080."""
+    candidates = ["http://127.0.0.1:8080", "socks5://127.0.0.1:1080"]
+    for proxy_url in candidates:
+        try:
+            req = urllib.request.Request("https://www.cloudflare.com/cdn-cgi/trace", headers={"User-Agent": "curl/7.68.0"})
+            proxy_support = urllib.request.ProxyHandler({'http': proxy_url, 'https': proxy_url})
+            opener = urllib.request.build_opener(proxy_support)
+            with opener.open(req, timeout=3) as resp:
+                data = resp.read().decode('utf-8')
+                if "warp=on" in data or "ip=" in data:
+                    log(f"Verified active WARP proxy tunnel on {proxy_url}!")
+                    return proxy_url
+        except Exception as e:
+            log(f"Proxy check {proxy_url} notice: {e}")
     return None
 
 def download_tiktok_tikwm(url: str, output_dir: Path, is_audio: bool = False) -> Path | None:
@@ -108,49 +109,53 @@ def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str, proxy: str | No
     ]
 
     proxy_args = ["--proxy", proxy] if proxy else []
+    # Make sure local requests to bgutil-provider on 127.0.0.1:4416 don't pass through proxy
+    env_vars = {**os.environ, "NO_PROXY": "127.0.0.1,localhost"}
 
-    # --- Strategy 1: Cloudflare WARP proxy + BgUtil PO-Token Provider ---
-    log("YouTube Strategy 1: Attempting yt-dlp with BgUtil PO-Token + WARP Proxy...")
+    # --- Strategy 1: WARP Proxy + BgUtil PO-Token Provider ---
+    log(f"YouTube Strategy 1: Attempting yt-dlp with BgUtil PO-Token (proxy={proxy})...")
     cmd1 = base_cmd + proxy_args + fmt_args + [
         "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
         "--extractor-args", "youtube:player-client=mweb,tv,web_safari,web",
         url
     ]
-    res1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    res1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_vars)
     log(f"Strategy 1 exit code: {res1.returncode}\n{res1.stdout[-1200:]}")
     f = get_latest_file(output_dir)
     if f:
         log(f"Strategy 1 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
         return f
 
-    # --- Strategy 2: yt-dlp via WARP Proxy without POT plugin restrictions ---
-    log("YouTube Strategy 2: Attempting standard yt-dlp via WARP Proxy...")
+    # --- Strategy 2: WARP Proxy + standard clients ---
+    log(f"YouTube Strategy 2: Attempting standard yt-dlp with proxy={proxy}...")
     cmd2 = base_cmd + proxy_args + fmt_args + [
         "--extractor-args", "youtube:player-client=tv,mweb,web",
         url
     ]
-    res2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    res2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_vars)
     log(f"Strategy 2 exit code: {res2.returncode}\n{res2.stdout[-1200:]}")
     f = get_latest_file(output_dir)
     if f:
         log(f"Strategy 2 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
         return f
 
-    # --- Strategy 3: TV & VR Clients via WARP Proxy ---
-    log("YouTube Strategy 3: Attempting TV / VR clients via WARP Proxy...")
-    cmd3 = base_cmd + proxy_args + fmt_args + [
-        "--extractor-args", "youtube:player-client=tv,android_vr,tv_embedded",
-        url
-    ]
-    res3 = subprocess.run(cmd3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    log(f"Strategy 3 exit code: {res3.returncode}\n{res3.stdout[-1200:]}")
-    f = get_latest_file(output_dir)
-    if f:
-        log(f"Strategy 3 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
-        return f
+    # --- Strategy 3: Direct connection without proxy (fallback) ---
+    if proxy:
+        log("YouTube Strategy 3: Attempting direct yt-dlp with BgUtil PO-Token (no proxy)...")
+        cmd3 = base_cmd + fmt_args + [
+            "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
+            "--extractor-args", "youtube:player-client=tv,android_vr,tv_embedded",
+            url
+        ]
+        res3 = subprocess.run(cmd3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_vars)
+        log(f"Strategy 3 exit code: {res3.returncode}\n{res3.stdout[-1200:]}")
+        f = get_latest_file(output_dir)
+        if f:
+            log(f"Strategy 3 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
+            return f
 
-    # --- Strategy 4: pytubefix with proxy ---
-    log("YouTube Strategy 4: Attempting pytubefix fallback with proxy...")
+    # --- Strategy 4: pytubefix fallback ---
+    log("YouTube Strategy 4: Attempting pytubefix fallback...")
     try:
         from pytubefix import YouTube
         proxies = {"http": proxy, "https": proxy} if proxy else None
