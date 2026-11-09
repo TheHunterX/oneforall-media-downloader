@@ -36,6 +36,6 @@ jobs:
         run: |
           echo "Deploying OneForAllDownloaderBot to Telegram Serverless..."
           npx @tgcloud/cli push
-          echo "Running database migrations..."
-          npx @tgcloud/cli migrate
-          echo "Bot deployed successfully!"
+          echo "Running database migrations with --yes..."
+          npx @tgcloud/cli migrate --yes
+          echo "Bot successfully deployed and migrated!"
