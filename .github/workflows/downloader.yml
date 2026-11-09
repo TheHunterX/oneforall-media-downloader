@@ -10,7 +10,7 @@ on:
       format:
         description: 'Output format'
         required: true
-        default: 'video-best'
+        default: 'video-720p'
         type: choice
         options:
           - 'video-best'
@@ -36,17 +36,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js for yt-dlp JavaScript runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install yt-dlp and ffmpeg
+      - name: Install yt-dlp, gallery-dl, and ffmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
-          pip install yt-dlp
+          pip install yt-dlp gallery-dl
 
       - name: Download Media with yt-dlp
         id: dl
@@ -59,27 +64,36 @@ jobs:
 
           echo "Downloading $URL with format $FORMAT..."
 
+          # Base yt-dlp options: bypass bot checks with android/mweb client and nodejs runtime
+          YTDLP_BASE_OPTS=(
+            --js-runtimes node
+            --extractor-args "youtube:player_client=android,mweb,web"
+            --no-playlist
+            --retries 3
+            --socket-timeout 30
+          )
+
           if [ "$FORMAT" = "audio-mp3" ]; then
-            yt-dlp -x --audio-format mp3 --audio-quality 0 \
-              --no-playlist \
+            yt-dlp "${YTDLP_BASE_OPTS[@]}" \
+              -x --audio-format mp3 --audio-quality 0 \
               -o "%(title).80s [%(id)s].%(ext)s" \
               "$URL"
           elif [ "$FORMAT" = "video-1080p" ]; then
-            yt-dlp -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" \
+            yt-dlp "${YTDLP_BASE_OPTS[@]}" \
+              -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" \
               --merge-output-format mp4 \
-              --no-playlist \
               -o "%(title).80s [%(id)s].%(ext)s" \
               "$URL"
           elif [ "$FORMAT" = "video-720p" ]; then
-            yt-dlp -f "bestvideo[height<=720]+bestaudio/best[height<=720]/best" \
+            yt-dlp "${YTDLP_BASE_OPTS[@]}" \
+              -f "bestvideo[height<=720]+bestaudio/best[height<=720]/best" \
               --merge-output-format mp4 \
-              --no-playlist \
               -o "%(title).80s [%(id)s].%(ext)s" \
               "$URL"
           else
-            yt-dlp -f "bestvideo+bestaudio/best" \
+            yt-dlp "${YTDLP_BASE_OPTS[@]}" \
+              -f "bestvideo+bestaudio/best" \
               --merge-output-format mp4 \
-              --no-playlist \
               -o "%(title).80s [%(id)s].%(ext)s" \
               "$URL"
           fi
@@ -96,7 +110,7 @@ jobs:
           echo "filename=$FILENAME" >> $GITHUB_OUTPUT
           echo "filesize=$FILESIZE" >> $GITHUB_OUTPUT
 
-      - name: Upload to Temporary Fast Storage (Pixeldrain / Catbox)
+      - name: Upload to Temporary Fast Storage (Pixeldrain)
         id: upload_cloud
         run: |
           cd output
@@ -109,11 +123,11 @@ jobs:
           if [ -n "$FILE_ID" ]; then
             DIRECT_URL="https://pixeldrain.com/api/file/$FILE_ID?download"
             echo "direct_url=$DIRECT_URL" >> $GITHUB_OUTPUT
-            echo "### 🚀 لینک مستقیم دانلود آماده شد!" >> $GITHUB_STEP_SUMMARY
-            echo "**فایل:** $FILENAME" >> $GITHUB_STEP_SUMMARY
-            echo "**لینک دانلود پرسرعت:** [کلیک کنید برای دانلود]($DIRECT_URL)" >> $GITHUB_STEP_SUMMARY
+            echo "### 🚀 لینک مستقیم دانلود آماده شد / Direct Download Link Ready!" >> $GITHUB_STEP_SUMMARY
+            echo "**فایل / File:** \`$FILENAME\`" >> $GITHUB_STEP_SUMMARY
+            echo "**لینک دانلود پرسرعت / High-Speed Link:** [کلیک کنید / Click here]($DIRECT_URL)" >> $GITHUB_STEP_SUMMARY
           else
-            echo "Could not upload to Pixeldrain."
+            echo "Could not upload to Pixeldrain, artifact will be preserved on GitHub."
           fi
 
       - name: Send to Telegram (Optional)
@@ -132,7 +146,6 @@ jobs:
           FILESIZE="${{ steps.dl.outputs.filesize }}"
           DIRECT_URL="${{ steps.upload_cloud.outputs.direct_url }}"
 
-          # Telegram Bot API file limit is 50MB for bots
           if [ "$FILESIZE" -le 49000000 ]; then
             echo "Sending file directly to Telegram..."
             curl -F chat_id="$TG_CHAT_ID" \
