@@ -1,0 +1,155 @@
+name: Cloud Media Downloader (yt-dlp)
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Video or Post URL (YouTube, Instagram, TikTok, Twitter, etc.)'
+        required: true
+        type: string
+      format:
+        description: 'Output format'
+        required: true
+        default: 'video-best'
+        type: choice
+        options:
+          - 'video-best'
+          - 'video-1080p'
+          - 'video-720p'
+          - 'audio-mp3'
+      send_to_telegram:
+        description: 'Send downloaded file to Telegram channel/bot (requires secrets)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    name: Download and Deliver Media
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install yt-dlp and ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          pip install yt-dlp
+
+      - name: Download Media with yt-dlp
+        id: dl
+        run: |
+          mkdir -p output
+          cd output
+
+          URL="${{ github.event.inputs.url }}"
+          FORMAT="${{ github.event.inputs.format }}"
+
+          echo "Downloading $URL with format $FORMAT..."
+
+          if [ "$FORMAT" = "audio-mp3" ]; then
+            yt-dlp -x --audio-format mp3 --audio-quality 0 \
+              --no-playlist \
+              -o "%(title).80s [%(id)s].%(ext)s" \
+              "$URL"
+          elif [ "$FORMAT" = "video-1080p" ]; then
+            yt-dlp -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" \
+              --merge-output-format mp4 \
+              --no-playlist \
+              -o "%(title).80s [%(id)s].%(ext)s" \
+              "$URL"
+          elif [ "$FORMAT" = "video-720p" ]; then
+            yt-dlp -f "bestvideo[height<=720]+bestaudio/best[height<=720]/best" \
+              --merge-output-format mp4 \
+              --no-playlist \
+              -o "%(title).80s [%(id)s].%(ext)s" \
+              "$URL"
+          else
+            yt-dlp -f "bestvideo+bestaudio/best" \
+              --merge-output-format mp4 \
+              --no-playlist \
+              -o "%(title).80s [%(id)s].%(ext)s" \
+              "$URL"
+          fi
+
+          FILE_COUNT=$(ls -1 | wc -l)
+          if [ "$FILE_COUNT" -eq 0 ]; then
+            echo "Failed to download media!"
+            exit 1
+          fi
+
+          FILENAME=$(ls -1 | head -n 1)
+          FILESIZE=$(stat -c%s "$FILENAME")
+          echo "Downloaded file: $FILENAME ($FILESIZE bytes)"
+          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
+          echo "filesize=$FILESIZE" >> $GITHUB_OUTPUT
+
+      - name: Upload to Temporary Fast Storage (Pixeldrain / Catbox)
+        id: upload_cloud
+        run: |
+          cd output
+          FILENAME="${{ steps.dl.outputs.filename }}"
+          echo "Uploading $FILENAME to Pixeldrain for direct fast link..."
+          
+          RESPONSE=$(curl -s -F "file=@$FILENAME" https://pixeldrain.com/api/file)
+          FILE_ID=$(echo "$RESPONSE" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
+          
+          if [ -n "$FILE_ID" ]; then
+            DIRECT_URL="https://pixeldrain.com/api/file/$FILE_ID?download"
+            echo "direct_url=$DIRECT_URL" >> $GITHUB_OUTPUT
+            echo "### 🚀 لینک مستقیم دانلود آماده شد!" >> $GITHUB_STEP_SUMMARY
+            echo "**فایل:** $FILENAME" >> $GITHUB_STEP_SUMMARY
+            echo "**لینک دانلود پرسرعت:** [کلیک کنید برای دانلود]($DIRECT_URL)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Could not upload to Pixeldrain."
+          fi
+
+      - name: Send to Telegram (Optional)
+        if: ${{ github.event.inputs.send_to_telegram == 'true' }}
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
+            echo "Telegram secrets not configured. Skipping Telegram upload."
+            exit 0
+          fi
+
+          cd output
+          FILENAME="${{ steps.dl.outputs.filename }}"
+          FILESIZE="${{ steps.dl.outputs.filesize }}"
+          DIRECT_URL="${{ steps.upload_cloud.outputs.direct_url }}"
+
+          # Telegram Bot API file limit is 50MB for bots
+          if [ "$FILESIZE" -le 49000000 ]; then
+            echo "Sending file directly to Telegram..."
+            curl -F chat_id="$TG_CHAT_ID" \
+                 -F document=@"$FILENAME" \
+                 -F caption="🎬 $FILENAME%0A%0A📡 @OneForAllHub" \
+                 "https://api.telegram.org/bot$TG_BOT_TOKEN/sendDocument"
+          else
+            echo "File is larger than 50MB. Sending download link to Telegram..."
+            curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+                 -d chat_id="$TG_CHAT_ID" \
+                 -d parse_mode="HTML" \
+                 -d text="🎬 <b>فایل آماده دانلود شد!</b>%0A%0A📁 نام فایل: $FILENAME%0A🔗 <a href='$DIRECT_URL'>دانلود مستقیم با ترافیک نامحدود</a>%0A%0A📡 @OneForAllHub"
+          fi
+
+      - name: Save Artifact on GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-media
+          path: output/*
+          retention-days: 3
