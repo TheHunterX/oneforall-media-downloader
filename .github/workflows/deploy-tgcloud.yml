@@ -32,7 +32,7 @@ jobs:
 
       - name: Deploy bot with tgcloud CLI
         env:
-          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN || 'app9005060404:0_zPUpOZ3BDJmPgVr4wvBwPtE0hUltn0IQ_6HD2y-E0' }}
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
         run: |
           echo "Deploying OneForAllDownloaderBot to Telegram Serverless with --force..."
           npx @tgcloud/cli push --force
