@@ -1,5 +1,5 @@
 /**
- * OneForAllHub - Serverless Telegram Downloader Bot
+ * OneForAllHub - Serverless Telegram Downloader Bot (Bilingual: English & Persian)
  * Runs 100% FREE on Cloudflare Workers (0 server / 0 VPS required)
  * Handles: TikTok (No watermark), Instagram Reels/Posts, YouTube, Twitter/X
  */
@@ -20,17 +20,18 @@ export default {
       const text = update.message.text.trim();
       const messageId = update.message.message_id;
 
-      // Handle /start command
+      // Handle /start command (Bilingual)
       if (text.startsWith('/start')) {
         await sendTelegramMessage(env.BOT_TOKEN, chatId, 
-          `👋 <b>سلام به ربات دانلودر OneForAllHub خوش آمدید!</b>\n\n` +
-          `کافیست لینک ویدیو یا ریلز مورد نظر خود را از:\n` +
-          `• <b>TikTok</b> (بدون واترمارک)\n` +
-          `• <b>Instagram</b> (ریلز و پست)\n` +
-          `• <b>YouTube</b> (کلیپ و موزیک)\n` +
-          `• <b>Twitter / X</b>\n\n` +
-          `همینجا بفرستید تا سریعاً فایل ویدیویی یا صوتی را تحویل بگیرید.\n\n` +
-          `📡 <b>کانال ما:</b> @OneForAllHub`,
+          `👋 <b>سلام! به ربات دانلودر OneForAllHub خوش آمدید.</b>\n` +
+          `<i>Welcome to OneForAllHub Media Downloader Bot.</i>\n\n` +
+          `📥 <b>لینک ویدیو یا ریلز را ارسال کنید:</b>\n` +
+          `<i>Send any video, reel or music link from:</i>\n\n` +
+          `• <b>TikTok</b> (بدون واترمارک / No watermark)\n` +
+          `• <b>Instagram</b> (ریلز و پست / Reels & Posts)\n` +
+          `• <b>YouTube</b> (ویدیو و صوت / Video & Audio)\n` +
+          `• <b>Twitter / X & Pinterest</b>\n\n` +
+          `📡 <b>کانال ما / Official Channel:</b> @OneForAllHub`,
           { parse_mode: 'HTML' }
         );
         return new Response('OK');
@@ -39,31 +40,44 @@ export default {
       // Check URL
       const urlMatch = text.match(/(https?:\/\/[^\s]+)/g);
       if (!urlMatch) {
-        await sendTelegramMessage(env.BOT_TOKEN, chatId, '⚠️ لطفاً یک لینک معتبر اینستاگرام، تیک‌تاک یا یوتیوب ارسال کنید.');
+        await sendTelegramMessage(env.BOT_TOKEN, chatId, 
+          '⚠️ لطفاً یک لینک معتبر اینستاگرام، تیک‌تاک یا یوتیوب ارسال کنید.\n' +
+          '<i>Please send a valid Instagram, TikTok, or YouTube link.</i>'
+        );
         return new Response('OK');
       }
 
       const mediaUrl = urlMatch[0];
-      const statusMsg = await sendTelegramMessage(env.BOT_TOKEN, chatId, '⏳ در حال دریافت و آماده‌سازی فایل... لطفاً چند لحظه صبر کنید.');
+      const statusMsg = await sendTelegramMessage(env.BOT_TOKEN, chatId, 
+        '⏳ <b>در حال پردازش و استخراج فایل... لطفاً صبر کنید.</b>\n' +
+        '<i>Processing and extracting media... Please wait.</i>'
+      );
       const statusMsgId = statusMsg?.result?.message_id;
 
-      // 1. Process TikTok
+      // 1. Process TikTok via TikWM (No Watermark)
       if (mediaUrl.includes('tiktok.com')) {
-        const res = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(mediaUrl)}`);
-        const json = await res.json();
-        if (json && json.code === 0 && json.data) {
-          const videoUrl = json.data.play || json.data.wmplay;
-          const caption = `🎬 <b>${escapeHtml(json.data.title || 'TikTok Video')}</b>\n\n👤 ${json.data.author?.nickname || ''} (@${json.data.author?.unique_id || ''})\n\n📡 @OneForAllHub`;
-          
-          await sendTelegramVideo(env.BOT_TOKEN, chatId, videoUrl, caption);
-          if (statusMsgId) await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsgId);
-          return new Response('OK');
-        }
+        try {
+          const res = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(mediaUrl)}`, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+          });
+          const json = await res.json();
+          if (json && json.code === 0 && json.data) {
+            const videoUrl = json.data.play || json.data.wmplay;
+            const caption = `🎬 <b>${escapeHtml(json.data.title || 'TikTok Video')}</b>\n\n` +
+                            `👤 ${json.data.author?.nickname || ''} (@${json.data.author?.unique_id || 'TikTok'})\n` +
+                            `✨ <i>No Watermark HD</i>\n\n` +
+                            `📡 @OneForAllHub`;
+            
+            await sendTelegramVideo(env.BOT_TOKEN, chatId, videoUrl, caption);
+            if (statusMsgId) await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsgId);
+            return new Response('OK');
+          }
+        } catch (e) {}
       }
 
-      // 2. Process Instagram, YouTube, Twitter via Cobalt Serverless APIs
+      // 2. Multi-Cloud Cobalt Instances
       const COBALT_ENDPOINTS = [
-        'https://api.cobalt.tools/api/json',
+        'https://api.cobalt.tools/',
         'https://cobalt.kwiatekm.pl/api/json',
         'https://capi.wuk.sh/api/json'
       ];
@@ -89,20 +103,23 @@ export default {
           const data = await cobaltRes.json();
           if (data && (data.url || (data.picker && data.picker.length > 0))) {
             const targetUrl = data.url || data.picker[0].url;
-            const caption = `🎬 <b>آماده شد!</b>\n\n📡 دانلود شده از @OneForAllHub`;
+            const caption = `🎬 <b>آماده شد / Ready to watch!</b>\n\n📡 @OneForAllHub`;
             
             await sendTelegramVideo(env.BOT_TOKEN, chatId, targetUrl, caption);
             downloaded = true;
             if (statusMsgId) await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsgId);
             break;
           }
-        } catch (e) {
-          // Try next endpoint
-        }
+        } catch (e) {}
       }
 
       if (!downloaded) {
-        await sendTelegramMessage(env.BOT_TOKEN, chatId, '❌ متأسفانه دریافت این لینک با خطا مواجه شد. لطفاً اطمینان حاصل کنید پیج یا ویدیو عمومی (Public) باشد.');
+        await sendTelegramMessage(env.BOT_TOKEN, chatId, 
+          '❌ دریافت مستقیم ناموفق بود. اگر ویدیو خصوصی (Private) باشد قابل دانلود نیست.\n' +
+          'همچنین می‌توانید از وب‌سایت ما استفاده کنید:\n' +
+          '🌐 https://thehunterx.github.io/oneforall-media-downloader/\n\n' +
+          '<i>Direct download failed or media is private. You can also try our web app above.</i>'
+        );
         if (statusMsgId) await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsgId);
       }
 
