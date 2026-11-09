@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OneForAllHub Downloader | دانلودر همه‌کاره بدون سرور</title>
-    <meta name="description" content="دانلود رایگان و سریع ویدیو و موزیک از یوتیوب، اینستاگرام، تیک‌تاک و توییتر بدون نیاز به سرور و کاملاً رایگان - کاری از OneForAllHub">
+    <meta name="description" content="دانلود سریع و رایگان ویدیو، ریلز و موزیک از یوتیوب، اینستاگرام، تیک‌تاک و توییتر بدون سرور - OneForAllHub Free Serverless Media Downloader">
     
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,7 +17,7 @@
     <style>
         :root {
             --bg-color: #0b0f19;
-            --surface-color: rgba(22, 30, 49, 0.7);
+            --surface-color: rgba(22, 30, 49, 0.75);
             --surface-border: rgba(255, 255, 255, 0.08);
             --primary: #3b82f6;
             --primary-hover: #2563eb;
@@ -48,6 +48,7 @@
                 radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.12) 0px, transparent 50%),
                 radial-gradient(at 100% 100%, rgba(6, 182, 212, 0.1) 0px, transparent 50%);
             background-attachment: fixed;
+            transition: all 0.3s ease;
         }
 
         .container {
@@ -85,6 +86,7 @@
             justify-content: center;
             box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
             color: white;
+            flex-shrink: 0;
         }
 
         .brand-text h1 {
@@ -103,6 +105,26 @@
             display: flex;
             align-items: center;
             gap: 10px;
+        }
+
+        .lang-switch-btn {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--surface-border);
+            color: var(--text-main);
+            padding: 7px 12px;
+            border-radius: 999px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .lang-switch-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.2);
         }
 
         .tg-badge {
@@ -144,7 +166,7 @@
         .hero p {
             color: var(--text-muted);
             font-size: 1.05rem;
-            max-width: 600px;
+            max-width: 620px;
             margin: 0 auto;
         }
 
@@ -437,6 +459,33 @@
             gap: 10px;
         }
 
+        .action-banner {
+            background: rgba(59, 130, 246, 0.08);
+            border: 1px dashed rgba(59, 130, 246, 0.3);
+            border-radius: var(--radius-md);
+            padding: 14px;
+            font-size: 0.88rem;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .action-banner a {
+            color: #60a5fa;
+            text-decoration: none;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .action-banner a:hover {
+            text-decoration: underline;
+        }
+
         /* Features Section */
         .features {
             display: grid;
@@ -509,21 +558,25 @@
                 </div>
                 <div class="brand-text">
                     <h1>OneForAllHub</h1>
-                    <span>Serverless Downloader</span>
+                    <span data-i18n="brandSub">دانلودر مدیا بدون سرور</span>
                 </div>
             </a>
             <div class="header-actions">
+                <button type="button" class="lang-switch-btn" id="langToggle">
+                    <span id="langFlag">🇬🇧</span>
+                    <span id="langLabel">English</span>
+                </button>
                 <a href="https://t.me/OneForAllHub" target="_blank" class="tg-badge">
                     <i data-lucide="send" style="width: 14px; height: 14px;"></i>
-                    <span>کانال تلگرام</span>
+                    <span data-i18n="tgChannel">کانال تلگرام</span>
                 </a>
             </div>
         </header>
 
         <!-- Hero -->
         <section class="hero">
-            <h2>دانلود سریع و بدون سرور از تمام پلتفرم‌ها</h2>
-            <p>لینک ویدیو یا ریلز مورد نظر خود از یوتیوب، اینستاگرام، تیک‌تاک یا توییتر را وارد کنید و فایل آماده دانلود را تحویل بگیرید.</p>
+            <h2 data-i18n="heroTitle">دانلود سریع و بدون سرور از تمام پلتفرم‌ها</h2>
+            <p data-i18n="heroDesc">لینک ویدیو یا ریلز مورد نظر خود از یوتیوب، اینستاگرام، تیک‌تاک یا توییتر را وارد کنید و فایل آماده دانلود را تحویل بگیرید.</p>
         </section>
 
         <!-- Platforms Supported -->
@@ -545,25 +598,25 @@
                             type="url" 
                             id="mediaUrl" 
                             class="url-input" 
-                            placeholder="https://www.youtube.com/watch?v=... یا اینستاگرام، تیک‌تاک"
+                            placeholder="https://www.youtube.com/watch?v=... یا لینک اینستاگرام، تیک‌تاک"
                             autocomplete="off"
                         >
                         <button type="button" class="paste-btn" id="pasteBtn">
                             <i data-lucide="clipboard" style="width: 12px; height: 12px;"></i>
-                            <span>الصاق</span>
+                            <span data-i18n="pasteBtn">الصاق</span>
                         </button>
                     </div>
                     <button class="btn-download" id="downloadBtn">
                         <i data-lucide="arrow-down-to-line" style="width: 20px; height: 20px;"></i>
-                        <span>شروع دریافت</span>
+                        <span data-i18n="downloadBtn">شروع دریافت</span>
                     </button>
                 </div>
 
                 <div class="format-bar">
-                    <span>فرمت مورد نظر:</span>
+                    <span data-i18n="formatLabel">فرمت مورد نظر:</span>
                     <div class="format-options">
-                        <button type="button" class="format-btn active" data-format="video">ویدیو (HD)</button>
-                        <button type="button" class="format-btn" data-format="audio">صوت / MP3</button>
+                        <button type="button" class="format-btn active" data-format="video" data-i18n="videoFmt">ویدیو (HD)</button>
+                        <button type="button" class="format-btn" data-format="audio" data-i18n="audioFmt">صوت / MP3</button>
                     </div>
                 </div>
             </div>
@@ -572,12 +625,12 @@
             <div class="result-container" id="resultContainer">
                 <div class="loader" id="loader" style="display: none;">
                     <div class="spinner"></div>
-                    <p id="loaderText">در حال استخراج لینک دانلود با بالاترین سرعت...</p>
+                    <p id="loaderText" data-i18n="loaderText">در حال استخراج لینک دانلود با بالاترین سرعت...</p>
                 </div>
 
                 <div class="error-box" id="errorBox" style="display: none;">
                     <i data-lucide="alert-triangle" style="width: 20px; height: 20px; flex-shrink: 0;"></i>
-                    <span id="errorMessage">خطا در پردازش لینک! لطفاً آدرس را بررسی کنید.</span>
+                    <span id="errorMessage" data-i18n="errFetch">خطا در پردازش لینک! لطفاً آدرس را بررسی کنید.</span>
                 </div>
 
                 <div class="result-box" id="resultBox" style="display: none;">
@@ -590,24 +643,33 @@
                     <div class="download-actions" id="actionButtons"></div>
                 </div>
             </div>
+
+            <!-- Actions Banner -->
+            <div class="action-banner">
+                <span data-i18n="cloudFallbackTip">برای ویدیوهای بسیار حجیم یا یوتیوب با کیفیت 4K، رانر ابری GitHub Actions در دسترس است.</span>
+                <a href="https://github.com/TheHunterX/oneforall-media-downloader/actions/workflows/downloader.yml" target="_blank">
+                    <span data-i18n="openActionsBtn">اجرا در GitHub Actions</span>
+                    <i data-lucide="external-link" style="width: 14px; height: 14px;"></i>
+                </a>
+            </div>
         </div>
 
         <!-- Features grid -->
         <div class="features">
             <div class="feature-item">
                 <div class="feature-icon"><i data-lucide="zap"></i></div>
-                <h3>۱۰۰٪ بدون سرور (Serverless)</h3>
-                <p>مبتنی بر رانرهای کلاودفلر و گیت‌هاب پیجز بدون هزینه ماهانه یا نیاز به سرور مجازی.</p>
+                <h3 data-i18n="feat1Title">۱۰۰٪ بدون سرور (Serverless)</h3>
+                <p data-i18n="feat1Desc">مبتنی بر رانرهای کلاودفلر و گیت‌هاب پیجز بدون هزینه ماهانه یا نیاز به سرور مجازی.</p>
             </div>
             <div class="feature-item">
                 <div class="feature-icon"><i data-lucide="shield-check"></i></div>
-                <h3>بدون واترمارک (No Watermark)</h3>
-                <p>ویدیوهای تیک‌تاک و ریلزهای اینستاگرام بدون لوگو و با کیفیت HD اصلی دانلود می‌شوند.</p>
+                <h3 data-i18n="feat2Title">بدون واترمارک (No Watermark)</h3>
+                <p data-i18n="feat2Desc">ویدیوهای تیک‌تاک و ریلزهای اینستاگرام بدون لوگو و با کیفیت HD اصلی دانلود می‌شوند.</p>
             </div>
             <div class="feature-item">
                 <div class="feature-icon"><i data-lucide="music"></i></div>
-                <h3>استخراج فایل صوتی (MP3)</h3>
-                <p>امکان تبدیل مستقیم هر ویدیوی یوتیوب، ریلز یا کلیپ تیک‌تاک به فایل صوتی سریع.</p>
+                <h3 data-i18n="feat3Title">استخراج فایل صوتی (MP3)</h3>
+                <p data-i18n="feat3Desc">امکان تبدیل مستقیم هر ویدیوی یوتیوب، ریلز یا کلیپ تیک‌تاک به فایل صوتی سریع.</p>
             </div>
         </div>
     </div>
@@ -615,12 +677,126 @@
     <!-- Footer -->
     <footer>
         <div class="container">
-            <p>طراحی شده برای کانال <a href="https://t.me/OneForAllHub" target="_blank">OneForAllHub</a> • دانلود خودکار بدون هزینه و سرور</p>
+            <p data-i18n="footerText">طراحی شده برای کانال <a href="https://t.me/OneForAllHub" target="_blank">OneForAllHub</a> • دانلود خودکار بدون هزینه و سرور</p>
         </div>
     </footer>
 
     <script>
         lucide.createIcons();
+
+        // Bilingual Dictionary
+        const i18n = {
+            fa: {
+                brandSub: 'دانلودر مدیا بدون سرور',
+                tgChannel: 'کانال تلگرام',
+                heroTitle: 'دانلود سریع و بدون سرور از تمام پلتفرم‌ها',
+                heroDesc: 'لینک ویدیو یا ریلز مورد نظر خود از یوتیوب، اینستاگرام، تیک‌تاک یا توییتر را وارد کنید و فایل آماده دانلود را تحویل بگیرید.',
+                inputPlaceholder: 'https://www.youtube.com/watch?v=... یا لینک اینستاگرام، تیک‌تاک',
+                pasteBtn: 'الصاق',
+                downloadBtn: 'شروع دریافت',
+                formatLabel: 'فرمت مورد نظر:',
+                videoFmt: 'ویدیو (HD)',
+                audioFmt: 'صوت / MP3',
+                loaderText: 'در حال استخراج لینک دانلود با بالاترین سرعت...',
+                errEmptyUrl: 'لطفاً آدرس ویدیو را در کادر بالا وارد کنید.',
+                errFetch: 'خطا در ارتباط با سرورهای دانلود یا محدودیت دسترسی این پلتفرم. اگر ویدیو خصوصی است یا نیاز به لاگین دارد ممکن است دانلود نشود.',
+                readyTitle: 'آماده دانلود',
+                sourceLabel: 'منبع:',
+                authorLabel: 'سازنده:',
+                formatSelected: 'فرمت:',
+                mp3Format: 'MP3 صوتی',
+                mp4Format: 'MP4 ویدیویی',
+                directDlBtn: 'دانلود مستقیم فایل',
+                copyDlBtn: 'کپی لینک مستقیم',
+                linkCopied: 'لینک دانلود کپی شد!',
+                cloudFallbackTip: 'برای ویدیوهای بسیار حجیم یا یوتیوب با کیفیت 4K، رانر ابری GitHub Actions در دسترس است.',
+                openActionsBtn: 'اجرا در GitHub Actions',
+                feat1Title: '۱۰۰٪ بدون سرور (Serverless)',
+                feat1Desc: 'مبتنی بر رانرهای کلاودفلر و گیت‌هاب پیجز بدون هزینه ماهانه یا نیاز به سرور مجازی.',
+                feat2Title: 'بدون واترمارک (No Watermark)',
+                feat2Desc: 'ویدیوهای تیک‌تاک و ریلزهای اینستاگرام بدون لوگو و با کیفیت HD اصلی دانلود می‌شوند.',
+                feat3Title: 'استخراج فایل صوتی (MP3)',
+                feat3Desc: 'امکان تبدیل مستقیم هر ویدیوی یوتیوب، ریلز یا کلیپ تیک‌تاک به فایل صوتی سریع.',
+                footerText: 'طراحی شده برای کانال <a href="https://t.me/OneForAllHub" target="_blank">OneForAllHub</a> • دانلود خودکار بدون هزینه و سرور'
+            },
+            en: {
+                brandSub: 'Serverless Media Downloader',
+                tgChannel: 'Telegram Channel',
+                heroTitle: 'Fast & Serverless Media Downloader',
+                heroDesc: 'Paste any video or reel link from YouTube, Instagram, TikTok, or Twitter/X to download crystal-clear HD files.',
+                inputPlaceholder: 'https://www.youtube.com/watch?v=... or Instagram, TikTok URL',
+                pasteBtn: 'Paste',
+                downloadBtn: 'Fetch Media',
+                formatLabel: 'Desired format:',
+                videoFmt: 'Video (HD)',
+                audioFmt: 'Audio (MP3)',
+                loaderText: 'Extracting high-speed media stream...',
+                errEmptyUrl: 'Please paste a valid video URL above.',
+                errFetch: 'Could not fetch this media. If it is private, age-restricted, or removed, extraction may be blocked.',
+                readyTitle: 'Ready to Download',
+                sourceLabel: 'Source:',
+                authorLabel: 'Creator:',
+                formatSelected: 'Format:',
+                mp3Format: 'MP3 Audio',
+                mp4Format: 'MP4 Video',
+                directDlBtn: 'Direct Download',
+                copyDlBtn: 'Copy Direct Link',
+                linkCopied: 'Direct download link copied!',
+                cloudFallbackTip: 'For large 4K files or long YouTube clips, use the free GitHub Actions cloud runner.',
+                openActionsBtn: 'Run in GitHub Actions',
+                feat1Title: '100% Serverless',
+                feat1Desc: 'Powered by GitHub Pages and Cloudflare Workers with zero VPS fees or maintenance.',
+                feat2Title: 'No Watermark',
+                feat2Desc: 'Download TikTok and Instagram Reels in original crystal-clear HD without logos.',
+                feat3Title: 'Direct MP3 Extraction',
+                feat3Desc: 'Convert any YouTube clip, reel, or video directly to pure high-bitrate audio.',
+                footerText: 'Designed for <a href="https://t.me/OneForAllHub" target="_blank">OneForAllHub</a> • Automated zero-server media downloading'
+            }
+        };
+
+        // Language state
+        let currentLang = localStorage.getItem('downloader_lang') || 'fa';
+
+        function setLanguage(lang) {
+            currentLang = lang;
+            localStorage.setItem('downloader_lang', lang);
+            document.documentElement.lang = lang;
+            document.documentElement.dir = lang === 'fa' ? 'rtl' : 'ltr';
+
+            // Update language toggle button
+            const langFlag = document.getElementById('langFlag');
+            const langLabel = document.getElementById('langLabel');
+            if (lang === 'fa') {
+                langFlag.textContent = '🇬🇧';
+                langLabel.textContent = 'English';
+            } else {
+                langFlag.textContent = '🇮🇷';
+                langLabel.textContent = 'فارسی';
+            }
+
+            // Update text elements
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (i18n[lang][key]) {
+                    if (el.tagName === 'INPUT') {
+                        el.placeholder = i18n[lang][key];
+                    } else {
+                        el.innerHTML = i18n[lang][key];
+                    }
+                }
+            });
+
+            // Update input placeholder specifically
+            document.getElementById('mediaUrl').placeholder = i18n[lang].inputPlaceholder;
+            lucide.createIcons();
+        }
+
+        document.getElementById('langToggle').addEventListener('click', () => {
+            setLanguage(currentLang === 'fa' ? 'en' : 'fa');
+        });
+
+        // Initialize Language
+        setLanguage(currentLang);
 
         // State
         let selectedFormat = 'video';
@@ -664,15 +840,7 @@
             });
         });
 
-        // Public Cobalt API instances for serverless extraction
-        const COBALT_INSTANCES = [
-            'https://api.cobalt.tools/api/json',
-            'https://cobalt.kwiatekm.pl/api/json',
-            'https://capi.wuk.sh/api/json',
-            'https://cobalt.xy2401.com/api/json'
-        ];
-
-        // Process Download Request
+        // Download Click
         downloadBtn.addEventListener('click', processDownload);
         mediaUrlInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') processDownload();
@@ -681,7 +849,7 @@
         async function processDownload() {
             const rawUrl = mediaUrlInput.value.trim();
             if (!rawUrl) {
-                showError('لطفاً آدرس ویدیو را در کادر بالا وارد کنید.');
+                showError(i18n[currentLang].errEmptyUrl);
                 return;
             }
 
@@ -697,19 +865,19 @@
             downloadBtn.disabled = true;
 
             try {
-                // If TikTok, use specialized TikWM API for watermark-free result
+                // If TikTok, use verified TikWM API
                 if (rawUrl.includes('tiktok.com')) {
-                    loaderText.textContent = 'در حال دریافت نسخه بدون واترمارک تیک‌تاک...';
+                    loaderText.textContent = i18n[currentLang].loaderText;
                     await downloadTikTok(rawUrl);
                     return;
                 }
 
-                // If Instagram / YouTube / Others, use Cobalt endpoints
-                loaderText.textContent = 'در حال ارتباط با موتور ابری استخراج رسانه...';
-                await downloadViaCobalt(rawUrl);
+                // If Instagram / YouTube / Others, use Multi-Instance APIs
+                loaderText.textContent = i18n[currentLang].loaderText;
+                await downloadMultiCloud(rawUrl);
             } catch (err) {
                 console.error(err);
-                showError('خطا در ارتباط با سرورهای دانلود یا محدودیت دسترسی این پلتفرم. اگر ویدیو خصوصی است یا نیاز به لاگین دارد ممکن است دانلود نشود.');
+                showError(i18n[currentLang].errFetch);
             } finally {
                 loader.style.display = 'none';
                 downloadBtn.disabled = false;
@@ -718,74 +886,65 @@
 
         // TikTok Downloader via TikWM
         async function downloadTikTok(url) {
-            try {
-                const response = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`);
-                const data = await response.json();
+            const response = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`);
+            const data = await response.json();
 
-                if (data && data.code === 0 && data.data) {
-                    const videoData = data.data;
-                    const directUrl = selectedFormat === 'audio' ? videoData.music : (videoData.play || videoData.wmplay);
-                    const title = videoData.title || 'TikTok Video';
+            if (data && data.code === 0 && data.data) {
+                const videoData = data.data;
+                const directUrl = selectedFormat === 'audio' ? videoData.music : (videoData.play || videoData.wmplay);
+                const title = videoData.title || (currentLang === 'fa' ? 'ویدیو تیک‌تاک' : 'TikTok Video');
 
-                    showSuccessResult({
-                        title: title,
-                        downloadUrl: directUrl,
-                        type: selectedFormat === 'audio' ? 'audio' : 'video',
-                        author: `@${videoData.author?.unique_id || 'TikTok User'}`,
-                        source: 'TikTok (No Watermark)'
-                    });
-                    return;
-                }
-            } catch (e) {
-                console.warn('TikWM fallback to Cobalt', e);
+                showSuccessResult({
+                    title: title,
+                    downloadUrl: directUrl,
+                    type: selectedFormat === 'audio' ? 'audio' : 'video',
+                    author: `@${videoData.author?.unique_id || 'TikTok'}`,
+                    source: 'TikTok (No Watermark)'
+                });
+                return;
             }
-            // Fallback to cobalt
-            await downloadViaCobalt(url);
+            throw new Error('TikWM returned non-zero code');
         }
 
-        // Cobalt Multi-Platform API
-        async function downloadViaCobalt(url) {
-            let lastError = null;
+        // Multi Cloud Extractor
+        async function downloadMultiCloud(url) {
+            const endpoints = [
+                'https://api.cobalt.tools/',
+                'https://cobalt.kwiatekm.pl/api/json',
+                'https://capi.wuk.sh/api/json'
+            ];
 
-            for (const instance of COBALT_INSTANCES) {
+            for (const ep of endpoints) {
                 try {
-                    const payload = {
-                        url: url,
-                        isAudioOnly: selectedFormat === 'audio',
-                        aFormat: 'mp3',
-                        vQuality: '1080',
-                        filenamePattern: 'basic'
-                    };
-
-                    const response = await fetch(instance, {
+                    const res = await fetch(ep, {
                         method: 'POST',
                         headers: {
                             'Accept': 'application/json',
                             'Content-Type': 'application/json'
                         },
-                        body: JSON.stringify(payload)
+                        body: JSON.stringify({
+                            url: url,
+                            isAudioOnly: selectedFormat === 'audio',
+                            aFormat: 'mp3',
+                            vQuality: '720'
+                        })
                     });
 
-                    if (!response.ok) continue;
-
-                    const data = await response.json();
+                    if (!res.ok) continue;
+                    const data = await res.json();
                     if (data && (data.url || (data.picker && data.picker.length > 0))) {
                         const targetUrl = data.url || data.picker[0].url;
                         showSuccessResult({
-                            title: data.filename || 'فایل استخراج شده',
+                            title: data.filename || i18n[currentLang].readyTitle,
                             downloadUrl: targetUrl,
                             type: selectedFormat === 'audio' ? 'audio' : 'video',
-                            source: 'Media Extractor Cloud'
+                            source: 'Cloud Media Extractor'
                         });
                         return;
                     }
-                } catch (e) {
-                    lastError = e;
-                }
+                } catch (e) {}
             }
-
-            // Fallback for YouTube: Direct format link helper or error
-            throw lastError || new Error('All instances busy');
+            throw new Error('All cloud extractors failed');
         }
 
         function showSuccessResult({ title, downloadUrl, type, author, source }) {
@@ -795,9 +954,9 @@
 
             mediaTitle.textContent = title;
             mediaMeta.innerHTML = `
-                ${source ? `<span>منبع: ${source}</span>` : ''}
-                ${author ? `<span>سازنده: ${author}</span>` : ''}
-                <span>فرمت: ${type === 'audio' ? 'MP3 صوتی' : 'MP4 ویدیویی'}</span>
+                ${source ? `<span>${i18n[currentLang].sourceLabel} ${source}</span>` : ''}
+                ${author ? `<span>${i18n[currentLang].authorLabel} ${author}</span>` : ''}
+                <span>${i18n[currentLang].formatSelected} ${type === 'audio' ? i18n[currentLang].mp3Format : i18n[currentLang].mp4Format}</span>
             `;
 
             if (type === 'audio') {
@@ -813,11 +972,11 @@
             actionButtons.innerHTML = `
                 <a href="${downloadUrl}" target="_blank" download class="btn-action btn-primary-action">
                     <i data-lucide="download" style="width: 16px; height: 16px;"></i>
-                    <span>دانلود مستقیم فایل</span>
+                    <span>${i18n[currentLang].directDlBtn}</span>
                 </a>
-                <button type="button" class="btn-action btn-secondary-action" onclick="navigator.clipboard.writeText('${downloadUrl}'); alert('لینک دانلود کپی شد!');">
+                <button type="button" class="btn-action btn-secondary-action" onclick="navigator.clipboard.writeText('${downloadUrl}'); alert('${i18n[currentLang].linkCopied}');">
                     <i data-lucide="copy" style="width: 16px; height: 16px;"></i>
-                    <span>کپی لینک مستقیم</span>
+                    <span>${i18n[currentLang].copyDlBtn}</span>
                 </button>
             `;
             lucide.createIcons();
