@@ -1,0 +1,6 @@
+name = "oneforall-downloader-bot"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# In Cloudflare dashboard, add Secret:
+# BOT_TOKEN = "your_telegram_bot_token_from_botfather"
