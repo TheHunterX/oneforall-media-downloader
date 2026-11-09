@@ -1,0 +1,41 @@
+name: Deploy Telegram Serverless Bot (tgcloud)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tgcloud/**'
+      - 'tgcloud.jsonc'
+      - 'package.json'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Telegram Serverless (V8 Cloud)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm install
+
+      - name: Deploy bot with tgcloud CLI
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN || 'app9005060404:0_zPUpOZ3BDJmPgVr4wvBwPtE0hUltn0IQ_6HD2y-E0' }}
+        run: |
+          echo "Deploying OneForAllDownloaderBot to Telegram Serverless..."
+          npx @tgcloud/cli push
+          echo "Running database migrations..."
+          npx @tgcloud/cli migrate
+          echo "Bot deployed successfully!"
