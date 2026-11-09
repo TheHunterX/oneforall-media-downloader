@@ -1,4 +1,16 @@
 import { api } from 'sdk';
+import { db } from 'sdk/db';
+import { downloads } from '../schema.js';
+
+function escapeHtml(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
 function sanitizeUrl(rawUrl) {
   if (!rawUrl) return rawUrl;
@@ -22,7 +34,27 @@ function sanitizeUrl(rawUrl) {
     return trimmed.split('?')[0];
   }
 
+  // 4. Twitter / X: Normalize
+  if (trimmed.includes('twitter.com') || trimmed.includes('x.com')) {
+    return trimmed.split('?')[0];
+  }
+
   return trimmed;
+}
+
+async function recordDownload(chatId, url, platform) {
+  try {
+    if (db && downloads) {
+      await db.insert(downloads).values({
+        chatId: Number(chatId),
+        url: String(url),
+        platform: String(platform),
+        createdAt: new Date().toISOString()
+      });
+    }
+  } catch (err) {
+    console.error('[DB Log Error]', err);
+  }
 }
 
 export default async function (message) {
@@ -56,7 +88,7 @@ export default async function (message) {
   if (!match) {
     await api.sendMessage({
       chat_id: chatId,
-      text: '⚠️ لطفاً یک لینک معتبر از تیک‌تاک، اینستاگرام یا یوتیوب ارسال کنید.\n\nPlease send a valid video URL.'
+      text: '⚠️ لطفاً یک لینک معتبر از تیک‌تاک، اینستاگرام، یوتیوب یا توییتر ارسال کنید.\n\nPlease send a valid video URL.'
     });
     return;
   }
@@ -88,21 +120,22 @@ export default async function (message) {
           parse_mode: 'HTML'
         });
 
+        await recordDownload(chatId, mediaUrl, 'tiktok');
+
         if (waitMsg && waitMsg.message_id) {
           try { await api.deleteMessage({ chat_id: chatId, message_id: waitMsg.message_id }); } catch (_) {}
         }
         return;
       }
     } catch (e) {
-      console.error('TikTok error', e);
+      console.error('TikTok error:', e);
     }
   }
 
-  // 2. Multi-Cloud Extractors for Instagram, YouTube, Twitter
+  // 2. Active Multi-Cloud Extractors (Modern Cobalt v10/v11 API)
   const extractors = [
-    'https://api.cobalt.tools/',
-    'https://cobalt.kwiatekm.pl/api/json',
-    'https://capi.wuk.sh/api/json'
+    'https://rue-cobalt.xenon.zone/',
+    'https://cobaltapi.cjs.nz/'
   ];
 
   for (const ep of extractors) {
@@ -111,32 +144,40 @@ export default async function (message) {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0'
         },
         body: JSON.stringify({
           url: mediaUrl,
-          vQuality: '720',
-          filenamePattern: 'basic'
+          videoQuality: '720'
         })
       });
 
-      if (!r.ok) continue;
+      if (!r.ok) {
+        console.warn(`[Extractor ${ep}] returned status ${r.status}`);
+        continue;
+      }
+
       const json = await r.json();
       if (json && (json.url || (json.picker && json.picker[0]?.url))) {
         const direct = json.url || json.picker[0].url;
         await api.sendVideo({
           chat_id: chatId,
           video: direct,
-          caption: `🎬 <b>فایل آماده شد / Ready to watch!</b>\n\n📡 @OneForAllHub`,
+          caption: `🎬 <b>${escapeHtml(json.filename || 'فایل آماده شد / Ready to watch!')}</b>\n\n📡 @OneForAllHub`,
           parse_mode: 'HTML'
         });
+
+        await recordDownload(chatId, mediaUrl, 'cloud-extractor');
 
         if (waitMsg && waitMsg.message_id) {
           try { await api.deleteMessage({ chat_id: chatId, message_id: waitMsg.message_id }); } catch (_) {}
         }
         return;
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error(`[Extractor ${ep}] error:`, e);
+    }
   }
 
   // Fallback notification with direct Web App link
@@ -153,13 +194,4 @@ export default async function (message) {
   if (waitMsg && waitMsg.message_id) {
     try { await api.deleteMessage({ chat_id: chatId, message_id: waitMsg.message_id }); } catch (_) {}
   }
-}
-
-function escapeHtml(text) {
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
 }
