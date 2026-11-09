@@ -1,5 +1,30 @@
 import { api } from 'sdk';
 
+function sanitizeUrl(rawUrl) {
+  if (!rawUrl) return rawUrl;
+  const trimmed = rawUrl.trim();
+
+  // 1. YouTube: Extract pure 11-char video ID and strip playlist/mix parameters
+  if (trimmed.includes('youtube.com') || trimmed.includes('youtu.be')) {
+    const m = trimmed.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
+    if (m && m[1]) {
+      return `https://www.youtube.com/watch?v=${m[1]}`;
+    }
+  }
+
+  // 2. Instagram: Strip ?igsh= and trackers
+  if (trimmed.includes('instagram.com')) {
+    return trimmed.split('?')[0].replace(/\/+$/, '') + '/';
+  }
+
+  // 3. TikTok: Strip query parameters
+  if (trimmed.includes('tiktok.com')) {
+    return trimmed.split('?')[0];
+  }
+
+  return trimmed;
+}
+
 export default async function (message) {
   if (!message || !message.text) return;
 
@@ -36,7 +61,7 @@ export default async function (message) {
     return;
   }
 
-  const mediaUrl = match[1];
+  const mediaUrl = sanitizeUrl(match[1]);
   let waitMsg = null;
   try {
     waitMsg = await api.sendMessage({
@@ -119,8 +144,8 @@ export default async function (message) {
     chat_id: chatId,
     parse_mode: 'HTML',
     text:
-      `⚠️ دریافت مستقیم این ویدیو در تلگرام با محدودیت مواجه شد (احتمالاً پیج خصوصی است یا ویدیو بیش از حد مجاز حجم دارد).\n\n` +
-      `🌐 می‌توانید لینک را در <b>وب‌اپلیکیشن رایگان ما</b> باز کرده و با حداکثر سرعت دانلود کنید:\n` +
+      `⚠️ دریافت مستقیم این ویدیو در تلگرام با محدودیت مواجه شد (احتمالاً ویدیو دارای محافظت کپی‌رایت یا حجم بیش از حد مجاز تلگرام است).\n\n` +
+      `🌐 می‌توانید لینک را در <b>وب‌اپلیکیشن رایگان ما</b> یا ربات دانلود ابری باز کرده و دانلود کنید:\n` +
       `https://thehunterx.github.io/oneforall-media-downloader/\n\n` +
       `📡 @OneForAllHub`
   });
