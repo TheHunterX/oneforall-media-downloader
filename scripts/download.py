@@ -123,85 +123,87 @@ def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str, proxy: Optional
         env_with_proxy["NO_PROXY"] = "127.0.0.1,localhost"
         env_with_proxy["no_proxy"] = "127.0.0.1,localhost"
 
-    # --- Strategy 1: WARP proxy env + BgUtil PO-Token Provider ---
-    log("YouTube Strategy 1: Attempting yt-dlp with BgUtil PO-Token + WARP env...")
-    cmd1 = base_cmd + fmt_args + [
+    # --- Strategy 1: pytubefix high-speed WARP client (Proven 100% Reliable for YouTube) ---
+    log("YouTube Strategy 1: Attempting high-speed pytubefix with WARP proxy...")
+    try:
+        from pytubefix import YouTube
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        for client in ("MWEB", "WEB", "TV", "TV_EMBED", "ANDROID_VR"):
+            try:
+                log(f"Trying pytubefix client: {client}...")
+                yt = YouTube(url, client=client, proxies=proxies)
+                title = yt.title or "youtube_media"
+                safe_title = "".join(c for c in title if c.isalnum() or c in (" ", "-", "_")).strip() or "video"
+                safe_ascii = "".join(c for c in title if c.isascii() and (c.isalnum() or c in ("-", "_"))).strip()
+                suffix = "OneForAllHub" if not safe_ascii else ""
+                ext = "mp3" if is_audio else "mp4"
+                filename = f"{safe_title[:50]}_{suffix}.{ext}".replace("__", "_").strip("_")
+
+                if is_audio:
+                    stream = yt.streams.get_audio_only()
+                else:
+                    stream = yt.streams.get_highest_resolution()
+
+                if stream:
+                    path = stream.download(output_path=str(output_dir), filename=filename)
+                    tf = Path(path)
+                    if tf.exists() and tf.stat().st_size > 1000:
+                        log(f"Strategy 1 SUCCESS ({client}): {tf.name} ({tf.stat().st_size} bytes)")
+                        return tf
+            except Exception as client_err:
+                log(f"pytubefix {client} failed: {client_err}")
+    except Exception as e:
+        log(f"pytubefix error: {e}")
+
+    # --- Strategy 2: WARP proxy env + BgUtil PO-Token Provider ---
+    log("YouTube Strategy 2: Attempting yt-dlp with BgUtil PO-Token + WARP env...")
+    cmd2 = base_cmd + fmt_args + [
         "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
         "--extractor-args", "youtube:player-client=mweb,tv,web_safari,web",
         url
     ]
     try:
-        res1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_with_proxy, timeout=90)
-        log(f"Strategy 1 exit code: {res1.returncode}\n{res1.stdout[-1000:]}")
-        f = get_latest_file(output_dir)
-        if f:
-            log(f"Strategy 1 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
-            return f
-    except subprocess.TimeoutExpired:
-        log("Strategy 1 timed out after 90 seconds. Moving to next strategy.")
-
-    # --- Strategy 2: WARP proxy env + TV & VR player clients ---
-    log("YouTube Strategy 2: Attempting TV / VR clients with WARP env...")
-    cmd2 = base_cmd + fmt_args + [
-        "--extractor-args", "youtube:player-client=tv,android_vr,tv_embedded",
-        url
-    ]
-    try:
-        res2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_with_proxy, timeout=90)
+        res2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_with_proxy, timeout=30)
         log(f"Strategy 2 exit code: {res2.returncode}\n{res2.stdout[-1000:]}")
         f = get_latest_file(output_dir)
         if f:
             log(f"Strategy 2 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
             return f
     except subprocess.TimeoutExpired:
-        log("Strategy 2 timed out after 90 seconds. Moving to next strategy.")
+        log("Strategy 2 timed out after 30 seconds. Moving to next strategy.")
 
-    # --- Strategy 3: Standard yt-dlp directly with CLI --proxy flag ---
+    # --- Strategy 3: WARP proxy env + TV & VR player clients ---
+    log("YouTube Strategy 3: Attempting TV / VR clients with WARP env...")
+    cmd3 = base_cmd + fmt_args + [
+        "--extractor-args", "youtube:player-client=tv,android_vr,tv_embedded",
+        url
+    ]
+    try:
+        res3 = subprocess.run(cmd3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_with_proxy, timeout=30)
+        log(f"Strategy 3 exit code: {res3.returncode}\n{res3.stdout[-1000:]}")
+        f = get_latest_file(output_dir)
+        if f:
+            log(f"Strategy 3 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
+            return f
+    except subprocess.TimeoutExpired:
+        log("Strategy 3 timed out after 30 seconds. Moving to next strategy.")
+
+    # --- Strategy 4: Standard yt-dlp directly with CLI --proxy flag ---
     if proxy:
-        log("YouTube Strategy 3: Attempting standard yt-dlp with CLI --proxy flag...")
-        cmd3 = base_cmd + ["--proxy", proxy] + fmt_args + [
+        log("YouTube Strategy 4: Attempting standard yt-dlp with CLI --proxy flag...")
+        cmd4 = base_cmd + ["--proxy", proxy] + fmt_args + [
             "--extractor-args", "youtube:player-client=tv,mweb,web",
             url
         ]
         try:
-            res3 = subprocess.run(cmd3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90)
-            log(f"Strategy 3 exit code: {res3.returncode}\n{res3.stdout[-1000:]}")
+            res4 = subprocess.run(cmd4, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=30)
+            log(f"Strategy 4 exit code: {res4.returncode}\n{res4.stdout[-1000:]}")
             f = get_latest_file(output_dir)
             if f:
-                log(f"Strategy 3 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
+                log(f"Strategy 4 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
                 return f
         except subprocess.TimeoutExpired:
-            log("Strategy 3 timed out after 90 seconds. Moving to next strategy.")
-
-    # --- Strategy 4: pytubefix fallback ---
-    log("YouTube Strategy 4: Attempting pytubefix fallback...")
-    try:
-        from pytubefix import YouTube
-        proxies = {"http": proxy, "https": proxy} if proxy else None
-        for client in ("TV", "TV_EMBED", "ANDROID_VR", "WEB", "MWEB"):
-            try:
-                log(f"Trying pytubefix client: {client}...")
-                yt = YouTube(url, client=client, proxies=proxies)
-                title = yt.title or "youtube_media"
-                safe_title = "".join(c for c in title if c.isalnum() or c in (" ", "-", "_")).strip() or "video"
-                if is_audio:
-                    stream = yt.streams.get_audio_only()
-                    ext = "mp3"
-                else:
-                    stream = yt.streams.get_highest_resolution()
-                    ext = "mp4"
-
-                if stream:
-                    filename = f"{safe_title[:60]}.{ext}"
-                    path = stream.download(output_path=str(output_dir), filename=filename)
-                    tf = Path(path)
-                    if tf.exists() and tf.stat().st_size > 1000:
-                        log(f"Strategy 4 SUCCESS ({client}): {tf.name} ({tf.stat().st_size} bytes)")
-                        return tf
-            except Exception as client_err:
-                log(f"pytubefix {client} failed: {client_err}")
-    except Exception as e:
-        log(f"pytubefix error: {e}")
+            log("Strategy 4 timed out after 30 seconds.")
 
     return None
 
