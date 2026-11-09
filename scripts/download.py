@@ -33,6 +33,22 @@ def sanitize_url(raw_url: str) -> str:
 
     return raw_url
 
+def check_warp_proxy() -> str | None:
+    """Check if the local Cloudflare WARP proxy (wireproxy) is running on port 8080."""
+    try:
+        req = urllib.request.Request("http://127.0.0.1:8080", headers={"User-Agent": "curl/7.68.0"})
+        # Simple test connection
+        proxy_support = urllib.request.ProxyHandler({'http': 'http://127.0.0.1:8080', 'https': 'http://127.0.0.1:8080'})
+        opener = urllib.request.build_opener(proxy_support)
+        with opener.open("https://www.cloudflare.com/cdn-cgi/trace", timeout=4) as resp:
+            data = resp.read().decode('utf-8')
+            if "warp=on" in data or "ip=" in data:
+                log("Cloudflare WARP Wireproxy tunnel verified active on 127.0.0.1:8080!")
+                return "http://127.0.0.1:8080"
+    except Exception as e:
+        log(f"WARP Proxy check notice: {e}")
+    return None
+
 def download_tiktok_tikwm(url: str, output_dir: Path, is_audio: bool = False) -> Path | None:
     log("Attempting TikTok download via TikWM API (HD No Watermark)...")
     api_url = f"https://www.tikwm.com/api/?url={urllib.parse.quote(url)}"
@@ -68,7 +84,7 @@ def get_latest_file(output_dir: Path, min_size: int = 1000) -> Path | None:
         return valid[0]
     return None
 
-def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str) -> Path | None:
+def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str, proxy: str | None = None) -> Path | None:
     is_audio = fmt == "audio-mp3"
     
     # Common format arguments
@@ -91,9 +107,11 @@ def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str) -> Path | None:
         "-o", "%(title).80s [%(id)s].%(ext)s"
     ]
 
-    # --- Strategy 1: BgUtil PO-Token Provider (Local Docker daemon on port 4416) ---
-    log("YouTube Strategy 1: Attempting yt-dlp with BgUtil PO-Token Provider...")
-    cmd1 = base_cmd + fmt_args + [
+    proxy_args = ["--proxy", proxy] if proxy else []
+
+    # --- Strategy 1: Cloudflare WARP proxy + BgUtil PO-Token Provider ---
+    log("YouTube Strategy 1: Attempting yt-dlp with BgUtil PO-Token + WARP Proxy...")
+    cmd1 = base_cmd + proxy_args + fmt_args + [
         "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
         "--extractor-args", "youtube:player-client=mweb,tv,web_safari,web",
         url
@@ -105,10 +123,10 @@ def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str) -> Path | None:
         log(f"Strategy 1 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
         return f
 
-    # --- Strategy 2: TV & VR Clients (Known for bypassing Web BotGuard blocks) ---
-    log("YouTube Strategy 2: Attempting yt-dlp with TV / VR player clients...")
-    cmd2 = base_cmd + fmt_args + [
-        "--extractor-args", "youtube:player-client=tv,android_vr,tv_embedded",
+    # --- Strategy 2: yt-dlp via WARP Proxy without POT plugin restrictions ---
+    log("YouTube Strategy 2: Attempting standard yt-dlp via WARP Proxy...")
+    cmd2 = base_cmd + proxy_args + fmt_args + [
+        "--extractor-args", "youtube:player-client=tv,mweb,web",
         url
     ]
     res2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -118,41 +136,28 @@ def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str) -> Path | None:
         log(f"Strategy 2 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
         return f
 
-    # --- Strategy 3: Node-generated PO-Token if present in /tmp/pot_token.json ---
-    pot_file = Path("/tmp/pot_token.json")
-    if pot_file.exists():
-        try:
-            content = pot_file.read_text().strip()
-            # Extract JSON from potential CLI output
-            m = re.search(r'\{.*\}', content, re.DOTALL)
-            if m:
-                pot_data = json.loads(m.group(0))
-                visitor_data = pot_data.get("visitorData")
-                po_token = pot_data.get("poToken")
-                if visitor_data and po_token:
-                    log("YouTube Strategy 3: Attempting yt-dlp with generated PO-Token...")
-                    cmd3 = base_cmd + fmt_args + [
-                        "--extractor-args", f"youtube:visitor_data={visitor_data};po_token=web+{po_token}",
-                        "--extractor-args", "youtube:player-client=web,mweb",
-                        url
-                    ]
-                    res3 = subprocess.run(cmd3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                    log(f"Strategy 3 exit code: {res3.returncode}\n{res3.stdout[-1200:]}")
-                    f = get_latest_file(output_dir)
-                    if f:
-                        log(f"Strategy 3 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
-                        return f
-        except Exception as e:
-            log(f"Strategy 3 token parse error: {e}")
+    # --- Strategy 3: TV & VR Clients via WARP Proxy ---
+    log("YouTube Strategy 3: Attempting TV / VR clients via WARP Proxy...")
+    cmd3 = base_cmd + proxy_args + fmt_args + [
+        "--extractor-args", "youtube:player-client=tv,android_vr,tv_embedded",
+        url
+    ]
+    res3 = subprocess.run(cmd3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    log(f"Strategy 3 exit code: {res3.returncode}\n{res3.stdout[-1200:]}")
+    f = get_latest_file(output_dir)
+    if f:
+        log(f"Strategy 3 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
+        return f
 
-    # --- Strategy 4: pytubefix with TV and WEB clients ---
-    log("YouTube Strategy 4: Attempting pytubefix fallback...")
+    # --- Strategy 4: pytubefix with proxy ---
+    log("YouTube Strategy 4: Attempting pytubefix fallback with proxy...")
     try:
         from pytubefix import YouTube
+        proxies = {"http": proxy, "https": proxy} if proxy else None
         for client in ("TV", "TV_EMBED", "ANDROID_VR", "WEB", "MWEB"):
             try:
                 log(f"Trying pytubefix client: {client}...")
-                yt = YouTube(url, client=client)
+                yt = YouTube(url, client=client, proxies=proxies)
                 title = yt.title or "youtube_media"
                 safe_title = "".join(c for c in title if c.isalnum() or c in (" ", "-", "_")).strip() or "video"
                 if is_audio:
@@ -176,7 +181,7 @@ def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str) -> Path | None:
 
     return None
 
-def download_general_ytdlp(url: str, output_dir: Path, fmt: str) -> Path | None:
+def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: str | None = None) -> Path | None:
     log(f"Attempting general yt-dlp download (format={fmt})...")
     is_audio = fmt == "audio-mp3"
     
@@ -189,6 +194,9 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str) -> Path | None:
         "--paths", str(output_dir),
         "-o", "%(title).80s [%(id)s].%(ext)s"
     ]
+
+    if proxy:
+        cmd.extend(["--proxy", proxy])
 
     if is_audio:
         cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
@@ -241,19 +249,22 @@ def main():
             except Exception:
                 pass
 
+    # Detect Cloudflare WARP proxy
+    warp_proxy = check_warp_proxy()
+
     target_file = None
 
     # Step 1: TikTok High-Speed Direct Engine
     if "tiktok.com" in url:
         target_file = download_tiktok_tikwm(url, output_dir, is_audio=is_audio)
 
-    # Step 2: YouTube Multi-Tier Engine (PO-Token, BgUtil, TV Client, pytubefix)
+    # Step 2: YouTube Multi-Tier Engine (WARP Proxy, PO-Token, BgUtil, TV Client, pytubefix)
     if (not target_file or not target_file.exists()) and ("youtube.com" in url or "youtu.be" in url):
-        target_file = download_youtube_ytdlp(url, output_dir, fmt)
+        target_file = download_youtube_ytdlp(url, output_dir, fmt, proxy=warp_proxy)
 
     # Step 3: General yt-dlp Engine (Instagram, Twitter, Pinterest, SoundCloud, etc.)
     if not target_file or not target_file.exists() or target_file.stat().st_size == 0:
-        target_file = download_general_ytdlp(url, output_dir, fmt)
+        target_file = download_general_ytdlp(url, output_dir, fmt, proxy=warp_proxy)
 
     if not target_file or not target_file.exists() or target_file.stat().st_size < 1000:
         log("ERROR: All download engines failed to retrieve this media link.")
