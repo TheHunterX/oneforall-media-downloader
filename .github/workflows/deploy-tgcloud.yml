@@ -34,8 +34,8 @@ jobs:
         env:
           TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN || 'app9005060404:0_zPUpOZ3BDJmPgVr4wvBwPtE0hUltn0IQ_6HD2y-E0' }}
         run: |
-          echo "Deploying OneForAllDownloaderBot to Telegram Serverless..."
-          npx @tgcloud/cli push
+          echo "Deploying OneForAllDownloaderBot to Telegram Serverless with --force..."
+          npx @tgcloud/cli push --force
           echo "Running database migrations with --yes..."
           npx @tgcloud/cli migrate --yes
           echo "Bot successfully deployed and migrated!"
