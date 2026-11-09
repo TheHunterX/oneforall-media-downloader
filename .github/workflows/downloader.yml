@@ -36,7 +36,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js for yt-dlp JavaScript runtime
+      - name: Set up Node.js for yt-dlp & PO-Token Generator
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -46,12 +46,31 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Start Bgutil PO-Token Provider Docker
+        run: |
+          echo "Starting brainicism/bgutil-ytdlp-pot-provider container..."
+          docker run --name bgutil-provider -d --init -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:4416/ping > /dev/null; then
+              echo "POT Provider is ready on port 4416!"
+              curl -s http://127.0.0.1:4416/ping
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Generate Fallback PO-Token via Node.js
+        run: |
+          npm install -g youtube-po-token-generator || true
+          youtube-po-token-generator > /tmp/pot_token.json 2>&1 || true
+          cat /tmp/pot_token.json || true
+
       - name: Install dependencies (yt-dlp, curl_cffi, pytubefix, and ffmpeg)
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
-          pip install "yt-dlp[default,curl-cffi]" gallery-dl requests pytubefix
+          pip install -U "yt-dlp[default,curl-cffi]" gallery-dl requests bgutil-ytdlp-pot-provider pytubefix
 
       - name: Download Media Engine
         id: dl
