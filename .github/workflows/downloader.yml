@@ -46,89 +46,17 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install yt-dlp, gallery-dl, and ffmpeg
+      - name: Install dependencies (yt-dlp with curl_cffi and ffmpeg)
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
-          pip install yt-dlp gallery-dl
+          pip install "yt-dlp[default,curl-cffi]" gallery-dl requests
 
-      - name: Download Media with yt-dlp
+      - name: Download Media Engine
         id: dl
         run: |
-          mkdir -p output
-          cd output
-
-          URL="${{ github.event.inputs.url }}"
-          FORMAT="${{ github.event.inputs.format }}"
-
-          echo "Downloading $URL with format $FORMAT..."
-
-          # Base yt-dlp options: bypass bot checks with android/mweb client and nodejs runtime
-          YTDLP_BASE_OPTS=(
-            --js-runtimes node
-            --extractor-args "youtube:player_client=android,mweb,web"
-            --no-playlist
-            --retries 3
-            --socket-timeout 30
-          )
-
-          if [ "$FORMAT" = "audio-mp3" ]; then
-            yt-dlp "${YTDLP_BASE_OPTS[@]}" \
-              -x --audio-format mp3 --audio-quality 0 \
-              -o "%(title).80s [%(id)s].%(ext)s" \
-              "$URL"
-          elif [ "$FORMAT" = "video-1080p" ]; then
-            yt-dlp "${YTDLP_BASE_OPTS[@]}" \
-              -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" \
-              --merge-output-format mp4 \
-              -o "%(title).80s [%(id)s].%(ext)s" \
-              "$URL"
-          elif [ "$FORMAT" = "video-720p" ]; then
-            yt-dlp "${YTDLP_BASE_OPTS[@]}" \
-              -f "bestvideo[height<=720]+bestaudio/best[height<=720]/best" \
-              --merge-output-format mp4 \
-              -o "%(title).80s [%(id)s].%(ext)s" \
-              "$URL"
-          else
-            yt-dlp "${YTDLP_BASE_OPTS[@]}" \
-              -f "bestvideo+bestaudio/best" \
-              --merge-output-format mp4 \
-              -o "%(title).80s [%(id)s].%(ext)s" \
-              "$URL"
-          fi
-
-          FILE_COUNT=$(ls -1 | wc -l)
-          if [ "$FILE_COUNT" -eq 0 ]; then
-            echo "Failed to download media!"
-            exit 1
-          fi
-
-          FILENAME=$(ls -1 | head -n 1)
-          FILESIZE=$(stat -c%s "$FILENAME")
-          echo "Downloaded file: $FILENAME ($FILESIZE bytes)"
-          echo "filename=$FILENAME" >> $GITHUB_OUTPUT
-          echo "filesize=$FILESIZE" >> $GITHUB_OUTPUT
-
-      - name: Upload to Temporary Fast Storage (Pixeldrain)
-        id: upload_cloud
-        run: |
-          cd output
-          FILENAME="${{ steps.dl.outputs.filename }}"
-          echo "Uploading $FILENAME to Pixeldrain for direct fast link..."
-          
-          RESPONSE=$(curl -s -F "file=@$FILENAME" https://pixeldrain.com/api/file)
-          FILE_ID=$(echo "$RESPONSE" | grep -o '"id":"[^"]*' | cut -d'"' -f4)
-          
-          if [ -n "$FILE_ID" ]; then
-            DIRECT_URL="https://pixeldrain.com/api/file/$FILE_ID?download"
-            echo "direct_url=$DIRECT_URL" >> $GITHUB_OUTPUT
-            echo "### 🚀 لینک مستقیم دانلود آماده شد / Direct Download Link Ready!" >> $GITHUB_STEP_SUMMARY
-            echo "**فایل / File:** \`$FILENAME\`" >> $GITHUB_STEP_SUMMARY
-            echo "**لینک دانلود پرسرعت / High-Speed Link:** [کلیک کنید / Click here]($DIRECT_URL)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "Could not upload to Pixeldrain, artifact will be preserved on GitHub."
-          fi
+          python scripts/download.py "${{ github.event.inputs.url }}" "${{ github.event.inputs.format }}"
 
       - name: Send to Telegram (Optional)
         if: ${{ github.event.inputs.send_to_telegram == 'true' }}
@@ -141,23 +69,25 @@ jobs:
             exit 0
           fi
 
-          cd output
           FILENAME="${{ steps.dl.outputs.filename }}"
+          FILEPATH="${{ steps.dl.outputs.filepath }}"
           FILESIZE="${{ steps.dl.outputs.filesize }}"
-          DIRECT_URL="${{ steps.upload_cloud.outputs.direct_url }}"
+          DIRECT_URL="${{ steps.dl.outputs.direct_url }}"
 
-          if [ "$FILESIZE" -le 49000000 ]; then
-            echo "Sending file directly to Telegram..."
-            curl -F chat_id="$TG_CHAT_ID" \
-                 -F document=@"$FILENAME" \
-                 -F caption="🎬 $FILENAME%0A%0A📡 @OneForAllHub" \
-                 "https://api.telegram.org/bot$TG_BOT_TOKEN/sendDocument"
-          else
-            echo "File is larger than 50MB. Sending download link to Telegram..."
-            curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
-                 -d chat_id="$TG_CHAT_ID" \
-                 -d parse_mode="HTML" \
-                 -d text="🎬 <b>فایل آماده دانلود شد!</b>%0A%0A📁 نام فایل: $FILENAME%0A🔗 <a href='$DIRECT_URL'>دانلود مستقیم با ترافیک نامحدود</a>%0A%0A📡 @OneForAllHub"
+          if [ -n "$FILEPATH" ] && [ -f "$FILEPATH" ]; then
+            if [ "$FILESIZE" -le 49000000 ]; then
+              echo "Sending file directly to Telegram..."
+              curl -F chat_id="$TG_CHAT_ID" \
+                   -F document=@"$FILEPATH" \
+                   -F caption="🎬 $FILENAME%0A%0A📡 @OneForAllHub" \
+                   "https://api.telegram.org/bot$TG_BOT_TOKEN/sendDocument"
+            else
+              echo "File is larger than 50MB. Sending download link to Telegram..."
+              curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+                   -d chat_id="$TG_CHAT_ID" \
+                   -d parse_mode="HTML" \
+                   -d text="🎬 <b>فایل آماده دانلود شد!</b>%0A%0A📁 نام فایل: $FILENAME%0A🔗 <a href='$DIRECT_URL'>دانلود مستقیم پرسرعت</a>%0A%0A📡 @OneForAllHub"
+            fi
           fi
 
       - name: Save Artifact on GitHub
