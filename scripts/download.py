@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import json
 import urllib.request
 import urllib.parse
@@ -9,8 +10,31 @@ from pathlib import Path
 def log(msg: str):
     print(f"[OneForAllDownloader] {msg}", flush=True)
 
+def sanitize_url(raw_url: str) -> str:
+    """Clean and normalize media URLs, stripping playlists, trackers, and session params."""
+    raw_url = raw_url.strip()
+    
+    # 1. YouTube: Extract pure 11-char video ID and strip playlist/mix parameters
+    if "youtube.com" in raw_url or "youtu.be" in raw_url:
+        match = re.search(r'(?:v=|youtu\.be/|shorts/|embed/)([a-zA-Z0-9_-]{11})', raw_url)
+        if match:
+            clean_id = match.group(1)
+            log(f"Sanitized YouTube URL from playlist/mix to pure video: {clean_id}")
+            return f"https://www.youtube.com/watch?v={clean_id}"
+
+    # 2. Instagram: Strip ?igsh= and query trackers
+    if "instagram.com" in raw_url:
+        clean = raw_url.split("?")[0].rstrip("/")
+        return clean + "/"
+
+    # 3. TikTok: Strip tracking params
+    if "tiktok.com" in raw_url:
+        return raw_url.split("?")[0]
+
+    return raw_url
+
 def download_tiktok_tikwm(url: str, output_dir: Path, is_audio: bool = False) -> Path | None:
-    log("Attempting TikTok download via TikWM API (No Watermark)...")
+    log("Attempting TikTok download via TikWM API (HD No Watermark)...")
     api_url = f"https://www.tikwm.com/api/?url={urllib.parse.quote(url)}"
     req = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
     try:
@@ -20,7 +44,6 @@ def download_tiktok_tikwm(url: str, output_dir: Path, is_audio: bool = False) ->
             d = data["data"]
             direct_url = d.get("music") if is_audio else (d.get("play") or d.get("wmplay"))
             title = d.get("title", "tiktok_video")[:60]
-            # Clean filename
             safe_title = "".join(c for c in title if c.isalnum() or c in (" ", "-", "_")).strip() or "tiktok"
             ext = "mp3" if is_audio else "mp4"
             target = output_dir / f"{safe_title}.{ext}"
@@ -36,19 +59,54 @@ def download_tiktok_tikwm(url: str, output_dir: Path, is_audio: bool = False) ->
         log(f"TikWM error: {e}")
     return None
 
+def download_youtube_pytubefix(url: str, output_dir: Path, is_audio: bool = False) -> Path | None:
+    log(f"Attempting YouTube download via pytubefix (is_audio={is_audio})...")
+    try:
+        from pytubefix import YouTube
+        
+        # Test clients in order: ANDROID, WEB, IOS
+        for client in ("ANDROID", "WEB", "IOS"):
+            try:
+                log(f"Trying pytubefix client: {client}...")
+                yt = YouTube(url, client=client)
+                title = yt.title or "youtube_video"
+                safe_title = "".join(c for c in title if c.isalnum() or c in (" ", "-", "_")).strip() or "youtube"
+                
+                if is_audio:
+                    stream = yt.streams.get_audio_only()
+                    ext = "mp3"
+                else:
+                    stream = yt.streams.get_highest_resolution()
+                    ext = "mp4"
+
+                if not stream:
+                    continue
+
+                filename = f"{safe_title[:60]}.{ext}"
+                target_path = stream.download(output_path=str(output_dir), filename=filename)
+                target = Path(target_path)
+                if target.exists() and target.stat().st_size > 0:
+                    log(f"pytubefix SUCCESS ({client}): {target.name} ({target.stat().st_size} bytes)")
+                    return target
+            except Exception as client_err:
+                log(f"pytubefix client {client} failed: {client_err}")
+    except Exception as e:
+        log(f"pytubefix general error: {e}")
+    return None
+
 def download_ytdlp(url: str, output_dir: Path, fmt: str) -> Path | None:
     log(f"Attempting download via yt-dlp (format={fmt})...")
     cmd = [
         "yt-dlp",
         "--no-playlist",
-        "--retries", "3",
+        "--retries", "5",
         "--socket-timeout", "30",
         "--js-runtimes", "node",
         "--paths", str(output_dir),
         "-o", "%(title).80s [%(id)s].%(ext)s"
     ]
 
-    # Try impersonation if available
+    # Use Chrome impersonation
     cmd.extend(["--impersonate", "chrome"])
 
     if fmt == "audio-mp3":
@@ -60,18 +118,17 @@ def download_ytdlp(url: str, output_dir: Path, fmt: str) -> Path | None:
     else:
         cmd.extend(["-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4"])
 
-    # Additional client fallbacks for YouTube
+    # If YouTube, supply multi-client fallbacks
     if "youtube.com" in url or "youtu.be" in url:
-        cmd.extend(["--extractor-args", "youtube:player_client=ios,tv_embedded,android"])
+        cmd.extend(["--extractor-args", "youtube:player_client=android,ios,web_safari,web_embedded"])
 
     cmd.append(url)
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    log("yt-dlp output:\n" + res.stdout[-1000:])
+    log("yt-dlp output summary:\n" + res.stdout[-1200:])
     
     files = list(output_dir.glob("*"))
     files = [f for f in files if f.is_file() and not f.name.endswith(".part") and not f.name.endswith(".ytdl")]
     if files:
-        # Return newest or largest file
         files.sort(key=lambda x: x.stat().st_size, reverse=True)
         return files[0]
     return None
@@ -94,25 +151,32 @@ def main():
         print("Usage: python download.py <url> [format]")
         sys.exit(1)
 
-    url = sys.argv[1].strip()
+    raw_url = sys.argv[1].strip()
     fmt = sys.argv[2].strip() if len(sys.argv) > 2 else "video-720p"
     is_audio = fmt == "audio-mp3"
+
+    # Always sanitize incoming URLs
+    url = sanitize_url(raw_url)
 
     output_dir = Path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     target_file = None
 
-    # Step 1: Specific high-speed handlers
+    # Step 1: TikTok High-Speed Engine
     if "tiktok.com" in url:
         target_file = download_tiktok_tikwm(url, output_dir, is_audio=is_audio)
 
-    # Step 2: yt-dlp fallback
+    # Step 2: YouTube pytubefix Engine (bypasses YouTube bot checks)
+    if (not target_file or not target_file.exists()) and ("youtube.com" in url or "youtu.be" in url):
+        target_file = download_youtube_pytubefix(url, output_dir, is_audio=is_audio)
+
+    # Step 3: General yt-dlp Engine with multi-client fallbacks
     if not target_file or not target_file.exists() or target_file.stat().st_size == 0:
         target_file = download_ytdlp(url, output_dir, fmt)
 
     if not target_file or not target_file.exists() or target_file.stat().st_size == 0:
-        log("ERROR: All download methods failed for this URL.")
+        log("ERROR: All download engines failed for this media link.")
         sys.exit(1)
 
     log(f"SUCCESS: Downloaded {target_file.name} ({target_file.stat().st_size} bytes)")
@@ -125,7 +189,7 @@ def main():
             f.write(f"filesize={target_file.stat().st_size}\n")
             f.write(f"filepath={target_file.resolve()}\n")
 
-    # Upload to Pixeldrain
+    # Upload to Pixeldrain for direct CDN link
     direct_link = upload_pixeldrain(target_file)
     if direct_link:
         log(f"Direct download link: {direct_link}")
