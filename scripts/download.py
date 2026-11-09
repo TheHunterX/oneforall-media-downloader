@@ -47,7 +47,7 @@ def check_warp_proxy() -> str | None:
                     log(f"Verified active WARP proxy tunnel on {proxy_url}!")
                     return proxy_url
         except Exception as e:
-            log(f"Proxy check {proxy_url} notice: {e}")
+            pass
     return None
 
 def download_tiktok_tikwm(url: str, output_dir: Path, is_audio: bool = False) -> Path | None:
@@ -102,57 +102,71 @@ def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str, proxy: str | No
         "yt-dlp",
         "--verbose",
         "--no-playlist",
-        "--retries", "10",
-        "--socket-timeout", "30",
+        "--retries", "5",
+        "--socket-timeout", "20",
         "--paths", str(output_dir),
         "-o", "%(title).80s [%(id)s].%(ext)s"
     ]
 
-    proxy_args = ["--proxy", proxy] if proxy else []
-    # Make sure local requests to bgutil-provider on 127.0.0.1:4416 don't pass through proxy
-    env_vars = {**os.environ, "NO_PROXY": "127.0.0.1,localhost"}
+    # Environment with proxy and strict NO_PROXY to protect localhost:4416
+    env_with_proxy = {**os.environ}
+    if proxy:
+        env_with_proxy["HTTP_PROXY"] = proxy
+        env_with_proxy["HTTPS_PROXY"] = proxy
+        env_with_proxy["http_proxy"] = proxy
+        env_with_proxy["https_proxy"] = proxy
+        env_with_proxy["NO_PROXY"] = "127.0.0.1,localhost"
+        env_with_proxy["no_proxy"] = "127.0.0.1,localhost"
 
-    # --- Strategy 1: WARP Proxy + BgUtil PO-Token Provider ---
-    log(f"YouTube Strategy 1: Attempting yt-dlp with BgUtil PO-Token (proxy={proxy})...")
-    cmd1 = base_cmd + proxy_args + fmt_args + [
+    # --- Strategy 1: WARP proxy env + BgUtil PO-Token Provider ---
+    log("YouTube Strategy 1: Attempting yt-dlp with BgUtil PO-Token + WARP env...")
+    cmd1 = base_cmd + fmt_args + [
         "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
         "--extractor-args", "youtube:player-client=mweb,tv,web_safari,web",
         url
     ]
-    res1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_vars)
-    log(f"Strategy 1 exit code: {res1.returncode}\n{res1.stdout[-1200:]}")
-    f = get_latest_file(output_dir)
-    if f:
-        log(f"Strategy 1 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
-        return f
-
-    # --- Strategy 2: WARP Proxy + standard clients ---
-    log(f"YouTube Strategy 2: Attempting standard yt-dlp with proxy={proxy}...")
-    cmd2 = base_cmd + proxy_args + fmt_args + [
-        "--extractor-args", "youtube:player-client=tv,mweb,web",
-        url
-    ]
-    res2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_vars)
-    log(f"Strategy 2 exit code: {res2.returncode}\n{res2.stdout[-1200:]}")
-    f = get_latest_file(output_dir)
-    if f:
-        log(f"Strategy 2 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
-        return f
-
-    # --- Strategy 3: Direct connection without proxy (fallback) ---
-    if proxy:
-        log("YouTube Strategy 3: Attempting direct yt-dlp with BgUtil PO-Token (no proxy)...")
-        cmd3 = base_cmd + fmt_args + [
-            "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
-            "--extractor-args", "youtube:player-client=tv,android_vr,tv_embedded",
-            url
-        ]
-        res3 = subprocess.run(cmd3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_vars)
-        log(f"Strategy 3 exit code: {res3.returncode}\n{res3.stdout[-1200:]}")
+    try:
+        res1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_with_proxy, timeout=90)
+        log(f"Strategy 1 exit code: {res1.returncode}\n{res1.stdout[-1000:]}")
         f = get_latest_file(output_dir)
         if f:
-            log(f"Strategy 3 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
+            log(f"Strategy 1 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
             return f
+    except subprocess.TimeoutExpired:
+        log("Strategy 1 timed out after 90 seconds. Moving to next strategy.")
+
+    # --- Strategy 2: WARP proxy env + TV & VR player clients ---
+    log("YouTube Strategy 2: Attempting TV / VR clients with WARP env...")
+    cmd2 = base_cmd + fmt_args + [
+        "--extractor-args", "youtube:player-client=tv,android_vr,tv_embedded",
+        url
+    ]
+    try:
+        res2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_with_proxy, timeout=90)
+        log(f"Strategy 2 exit code: {res2.returncode}\n{res2.stdout[-1000:]}")
+        f = get_latest_file(output_dir)
+        if f:
+            log(f"Strategy 2 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
+            return f
+    except subprocess.TimeoutExpired:
+        log("Strategy 2 timed out after 90 seconds. Moving to next strategy.")
+
+    # --- Strategy 3: Standard yt-dlp directly with CLI --proxy flag ---
+    if proxy:
+        log("YouTube Strategy 3: Attempting standard yt-dlp with CLI --proxy flag...")
+        cmd3 = base_cmd + ["--proxy", proxy] + fmt_args + [
+            "--extractor-args", "youtube:player-client=tv,mweb,web",
+            url
+        ]
+        try:
+            res3 = subprocess.run(cmd3, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90)
+            log(f"Strategy 3 exit code: {res3.returncode}\n{res3.stdout[-1000:]}")
+            f = get_latest_file(output_dir)
+            if f:
+                log(f"Strategy 3 SUCCESS: {f.name} ({f.stat().st_size} bytes)")
+                return f
+        except subprocess.TimeoutExpired:
+            log("Strategy 3 timed out after 90 seconds. Moving to next strategy.")
 
     # --- Strategy 4: pytubefix fallback ---
     log("YouTube Strategy 4: Attempting pytubefix fallback...")
@@ -194,8 +208,8 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: str | No
         "yt-dlp",
         "--verbose",
         "--no-playlist",
-        "--retries", "10",
-        "--socket-timeout", "30",
+        "--retries", "5",
+        "--socket-timeout", "20",
         "--paths", str(output_dir),
         "-o", "%(title).80s [%(id)s].%(ext)s"
     ]
@@ -213,15 +227,18 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: str | No
         cmd.extend(["-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4"])
 
     cmd.append(url)
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    log("yt-dlp output summary:\n" + res.stdout[-1200:])
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90)
+        log("yt-dlp output summary:\n" + res.stdout[-1000:])
+    except subprocess.TimeoutExpired:
+        log("General yt-dlp timed out after 90 seconds.")
     return get_latest_file(output_dir)
 
 def upload_pixeldrain(file_path: Path) -> str | None:
     log(f"Uploading {file_path.name} ({file_path.stat().st_size} bytes) to Pixeldrain CDN...")
     try:
         cmd = ["curl", "-s", "-F", f"file=@{file_path}", "https://pixeldrain.com/api/file"]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
         data = json.loads(res.stdout)
         file_id = data.get("id")
         if file_id:
