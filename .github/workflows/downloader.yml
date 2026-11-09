@@ -132,16 +132,17 @@ jobs:
           if [ -n "$FILEPATH" ] && [ -f "$FILEPATH" ]; then
             if [ "$FILESIZE" -le 49000000 ]; then
               echo "Sending file directly to Telegram..."
-              curl -F chat_id="$TG_CHAT_ID" \
+              curl -s -F chat_id="$TG_CHAT_ID" \
                    -F document=@"$FILEPATH" \
-                   -F caption="🎬 $FILENAME%0A%0A📡 @OneForAllHub" \
+                   -F caption="🎬 $FILENAME"$'\n\n'"📡 @OneForAllHub" \
                    "https://api.telegram.org/bot$TG_BOT_TOKEN/sendDocument"
             else
-              echo "File is larger than 50MB. Sending download link to Telegram..."
+              echo "File is larger than 50MB. Sending direct download link to Telegram..."
+              MSG="🎬 <b>فایل آماده دانلود شد!</b>"$'\n\n'"📁 نام: $FILENAME"$'\n'"🔗 <a href='$DIRECT_URL'>دانلود مستقیم پرسرعت</a>"$'\n\n'"📡 @OneForAllHub"
               curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
-                   -d chat_id="$TG_CHAT_ID" \
-                   -d parse_mode="HTML" \
-                   -d text="🎬 <b>فایل آماده دانلود شد!</b>%0A%0A📁 نام فایل: $FILENAME%0A🔗 <a href='$DIRECT_URL'>دانلود مستقیم پرسرعت</a>%0A%0A📡 @OneForAllHub"
+                   --data-urlencode chat_id="$TG_CHAT_ID" \
+                   --data-urlencode parse_mode="HTML" \
+                   --data-urlencode text="$MSG"
             fi
           fi
 
