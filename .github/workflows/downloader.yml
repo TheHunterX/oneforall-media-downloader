@@ -1,4 +1,4 @@
-name: Cloud Media Downloader (yt-dlp)
+name: Cloud Media Downloader (yt-dlp & pytubefix)
 
 on:
   workflow_dispatch:
@@ -46,12 +46,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies (yt-dlp with curl_cffi and ffmpeg)
+      - name: Install dependencies (yt-dlp, curl_cffi, pytubefix, and ffmpeg)
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
-          pip install "yt-dlp[default,curl-cffi]" gallery-dl requests
+          pip install "yt-dlp[default,curl-cffi]" gallery-dl requests pytubefix
 
       - name: Download Media Engine
         id: dl
