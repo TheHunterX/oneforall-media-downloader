@@ -71,6 +71,9 @@ jobs:
           wgcf register --accept-tos
           wgcf generate
 
+          # Force IPv4 anycast endpoint to avoid IPv6 routing issues on CI
+          sed -i 's/engage.cloudflareclient.com/162.159.192.1/g' wgcf-profile.conf
+
           cat << 'EOF' > wireproxy.conf
           WGConfig = ./wgcf-profile.conf
 
@@ -81,12 +84,20 @@ jobs:
           BindAddress = 127.0.0.1:8080
           EOF
 
-          echo "Starting wireproxy daemon..."
-          wireproxy -c wireproxy.conf -d
-          sleep 3
-
-          echo "Verifying Cloudflare WARP tunnel..."
-          curl -s --proxy http://127.0.0.1:8080 https://www.cloudflare.com/cdn-cgi/trace || true
+          echo "Starting wireproxy in background as sudo nohup..."
+          sudo nohup /usr/local/bin/wireproxy -c wireproxy.conf > /tmp/wireproxy.log 2>&1 &
+          
+          echo "Waiting for Cloudflare WARP tunnel..."
+          for i in {1..20}; do
+            if curl -s --proxy http://127.0.0.1:8080 https://www.cloudflare.com/cdn-cgi/trace | grep -q "warp=on"; then
+              echo "Cloudflare WARP proxy is UP and VERIFIED!"
+              curl -s --proxy http://127.0.0.1:8080 https://www.cloudflare.com/cdn-cgi/trace
+              break
+            fi
+            echo "Waiting for proxy ($i)..."
+            cat /tmp/wireproxy.log 2>/dev/null || true
+            sleep 1
+          done
 
       - name: Install dependencies (yt-dlp, curl_cffi, pytubefix, and ffmpeg)
         run: |
