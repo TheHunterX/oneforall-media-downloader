@@ -6,6 +6,7 @@ import urllib.request
 import urllib.parse
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 def log(msg: str):
     print(f"[OneForAllDownloader] {msg}", flush=True)
@@ -31,9 +32,13 @@ def sanitize_url(raw_url: str) -> str:
     if "tiktok.com" in raw_url:
         return raw_url.split("?")[0]
 
+    # 4. Twitter / X: Normalize
+    if "twitter.com" in raw_url or "x.com" in raw_url:
+        return raw_url.split("?")[0]
+
     return raw_url
 
-def check_warp_proxy() -> str | None:
+def check_warp_proxy() -> Optional[str]:
     """Check if the local Cloudflare WARP proxy (wireproxy) is running on port 8080 or 1080."""
     candidates = ["http://127.0.0.1:8080", "socks5://127.0.0.1:1080"]
     for proxy_url in candidates:
@@ -46,11 +51,11 @@ def check_warp_proxy() -> str | None:
                 if "warp=on" in data or "ip=" in data:
                     log(f"Verified active WARP proxy tunnel on {proxy_url}!")
                     return proxy_url
-        except Exception as e:
+        except Exception:
             pass
     return None
 
-def download_tiktok_tikwm(url: str, output_dir: Path, is_audio: bool = False) -> Path | None:
+def download_tiktok_tikwm(url: str, output_dir: Path, is_audio: bool = False) -> Optional[Path]:
     log("Attempting TikTok download via TikWM API (HD No Watermark)...")
     api_url = f"https://www.tikwm.com/api/?url={urllib.parse.quote(url)}"
     req = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
@@ -77,7 +82,7 @@ def download_tiktok_tikwm(url: str, output_dir: Path, is_audio: bool = False) ->
         log(f"TikWM error: {e}")
     return None
 
-def get_latest_file(output_dir: Path, min_size: int = 1000) -> Path | None:
+def get_latest_file(output_dir: Path, min_size: int = 1000) -> Optional[Path]:
     files = list(output_dir.glob("*"))
     valid = [f for f in files if f.is_file() and not f.name.endswith(".part") and not f.name.endswith(".ytdl") and f.stat().st_size > min_size]
     if valid:
@@ -85,7 +90,7 @@ def get_latest_file(output_dir: Path, min_size: int = 1000) -> Path | None:
         return valid[0]
     return None
 
-def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str, proxy: str | None = None) -> Path | None:
+def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str, proxy: Optional[str] = None) -> Optional[Path]:
     is_audio = fmt == "audio-mp3"
     
     # Common format arguments
@@ -200,7 +205,7 @@ def download_youtube_ytdlp(url: str, output_dir: Path, fmt: str, proxy: str | No
 
     return None
 
-def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: str | None = None) -> Path | None:
+def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: Optional[str] = None) -> Optional[Path]:
     log(f"Attempting general yt-dlp download (format={fmt})...")
     is_audio = fmt == "audio-mp3"
     
@@ -209,13 +214,19 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: str | No
         "--verbose",
         "--no-playlist",
         "--retries", "5",
-        "--socket-timeout", "20",
+        "--socket-timeout", "25",
         "--paths", str(output_dir),
         "-o", "%(title).80s [%(id)s].%(ext)s"
     ]
 
+    env_with_proxy = {**os.environ}
     if proxy:
-        cmd.extend(["--proxy", proxy])
+        env_with_proxy["HTTP_PROXY"] = proxy
+        env_with_proxy["HTTPS_PROXY"] = proxy
+        env_with_proxy["http_proxy"] = proxy
+        env_with_proxy["https_proxy"] = proxy
+        env_with_proxy["NO_PROXY"] = "127.0.0.1,localhost"
+        env_with_proxy["no_proxy"] = "127.0.0.1,localhost"
 
     if is_audio:
         cmd.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
@@ -228,17 +239,56 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: str | No
 
     cmd.append(url)
     try:
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=90)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env_with_proxy, timeout=120)
         log("yt-dlp output summary:\n" + res.stdout[-1000:])
+        f = get_latest_file(output_dir)
+        if f:
+            return f
     except subprocess.TimeoutExpired:
-        log("General yt-dlp timed out after 90 seconds.")
+        log("General yt-dlp timed out after 120 seconds.")
     return get_latest_file(output_dir)
 
-def upload_pixeldrain(file_path: Path) -> str | None:
-    log(f"Uploading {file_path.name} ({file_path.stat().st_size} bytes) to Pixeldrain CDN...")
+def upload_media_cdn(file_path: Path) -> Optional[str]:
+    log(f"Uploading {file_path.name} ({file_path.stat().st_size} bytes) to high-speed CDN...")
+    
+    # 1. Try tmpfiles.org (Instant direct download link, up to 10GB)
     try:
-        cmd = ["curl", "-s", "-F", f"file=@{file_path}", "https://pixeldrain.com/api/file"]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60)
+        log("Trying tmpfiles.org upload...")
+        cmd = ["curl", "-s", "-F", f"file=@{file_path}", "https://tmpfiles.org/api/v1/upload"]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120)
+        data = json.loads(res.stdout)
+        if data.get("status") == "success" and "data" in data and "url" in data["data"]:
+            raw_url = data["data"]["url"]
+            # Convert https://tmpfiles.org/123/name.mp4 -> https://tmpfiles.org/dl/123/name.mp4
+            direct_url = raw_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+            log(f"tmpfiles.org direct link: {direct_url}")
+            return direct_url
+    except Exception as e:
+        log(f"tmpfiles.org error: {e}")
+
+    # 2. Try uguu.se (Instant direct download, up to 100MB)
+    try:
+        log("Trying uguu.se upload...")
+        cmd = ["curl", "-s", "-F", f"files[]=@{file_path}", "https://uguu.se/upload.php"]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120)
+        data = json.loads(res.stdout)
+        if data.get("success") and "files" in data and len(data["files"]) > 0:
+            link = data["files"][0].get("url")
+            if link:
+                log(f"uguu.se direct link: {link}")
+                return link
+    except Exception as e:
+        log(f"uguu.se error: {e}")
+
+    # 3. Try Pixeldrain (if API key is available)
+    api_key = os.environ.get("PIXELDRAIN_API_KEY")
+    try:
+        log("Trying Pixeldrain upload...")
+        cmd = ["curl", "-s", "-F", f"file=@{file_path}"]
+        if api_key:
+            cmd.extend(["-u", f":{api_key}"])
+        cmd.append("https://pixeldrain.com/api/file")
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120)
         data = json.loads(res.stdout)
         file_id = data.get("id")
         if file_id:
@@ -246,7 +296,8 @@ def upload_pixeldrain(file_path: Path) -> str | None:
             log(f"Pixeldrain direct link: {link}")
             return link
     except Exception as e:
-        log(f"Upload error: {e}")
+        log(f"Pixeldrain error: {e}")
+
     return None
 
 def main():
@@ -302,8 +353,8 @@ def main():
             f.write(f"filesize={target_file.stat().st_size}\n")
             f.write(f"filepath={target_file.resolve()}\n")
 
-    # Upload to Pixeldrain for direct CDN link
-    direct_link = upload_pixeldrain(target_file)
+    # Upload to CDN for direct link
+    direct_link = upload_media_cdn(target_file)
     if direct_link:
         if github_output:
             with open(github_output, "a", encoding="utf-8") as f:
