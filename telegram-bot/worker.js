@@ -4,6 +4,46 @@
  * Handles: TikTok (No watermark), Instagram Reels/Posts, YouTube, Twitter/X
  */
 
+function escapeHtml(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function sanitizeUrl(rawUrl) {
+  if (!rawUrl) return rawUrl;
+  const trimmed = rawUrl.trim();
+
+  // 1. YouTube: Extract pure 11-char video ID and strip playlist/mix parameters
+  if (trimmed.includes('youtube.com') || trimmed.includes('youtu.be')) {
+    const m = trimmed.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
+    if (m && m[1]) {
+      return `https://www.youtube.com/watch?v=${m[1]}`;
+    }
+  }
+
+  // 2. Instagram: Strip ?igsh= and query trackers
+  if (trimmed.includes('instagram.com')) {
+    return trimmed.split('?')[0].replace(/\/+$/, '') + '/';
+  }
+
+  // 3. TikTok: Strip query parameters
+  if (trimmed.includes('tiktok.com')) {
+    return trimmed.split('?')[0];
+  }
+
+  // 4. Twitter / X: Normalize
+  if (trimmed.includes('twitter.com') || trimmed.includes('x.com')) {
+    return trimmed.split('?')[0];
+  }
+
+  return trimmed;
+}
+
 export default {
   async fetch(request, env) {
     if (request.method !== 'POST') {
@@ -47,7 +87,7 @@ export default {
         return new Response('OK');
       }
 
-      const mediaUrl = urlMatch[0];
+      const mediaUrl = sanitizeUrl(urlMatch[0]);
       const statusMsg = await sendTelegramMessage(env.BOT_TOKEN, chatId, 
         '⏳ <b>در حال پردازش و استخراج فایل... لطفاً صبر کنید.</b>\n' +
         '<i>Processing and extracting media... Please wait.</i>'
@@ -64,7 +104,7 @@ export default {
           if (json && json.code === 0 && json.data) {
             const videoUrl = json.data.play || json.data.wmplay;
             const caption = `🎬 <b>${escapeHtml(json.data.title || 'TikTok Video')}</b>\n\n` +
-                            `👤 ${json.data.author?.nickname || ''} (@${json.data.author?.unique_id || 'TikTok'})\n` +
+                            `👤 ${escapeHtml(json.data.author?.nickname || '')} (@${escapeHtml(json.data.author?.unique_id || 'TikTok')})\n` +
                             `✨ <i>No Watermark HD</i>\n\n` +
                             `📡 @OneForAllHub`;
             
@@ -72,14 +112,15 @@ export default {
             if (statusMsgId) await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsgId);
             return new Response('OK');
           }
-        } catch (e) {}
+        } catch (e) {
+          console.error('Worker TikTok error:', e);
+        }
       }
 
-      // 2. Multi-Cloud Cobalt Instances
+      // 2. Multi-Cloud Modern Cobalt Instances
       const COBALT_ENDPOINTS = [
-        'https://api.cobalt.tools/',
-        'https://cobalt.kwiatekm.pl/api/json',
-        'https://capi.wuk.sh/api/json'
+        'https://rue-cobalt.xenon.zone/',
+        'https://cobaltapi.cjs.nz/'
       ];
 
       let downloaded = false;
@@ -89,28 +130,33 @@ export default {
             method: 'POST',
             headers: {
               'Accept': 'application/json',
-              'Content-Type': 'application/json'
+              'Content-Type': 'application/json',
+              'User-Agent': 'Mozilla/5.0'
             },
             body: JSON.stringify({
               url: mediaUrl,
-              vQuality: '720',
-              filenamePattern: 'basic'
+              videoQuality: '720'
             })
           });
 
-          if (!cobaltRes.ok) continue;
+          if (!cobaltRes.ok) {
+            console.warn(`[Worker Cobalt ${endpoint}] Status: ${cobaltRes.status}`);
+            continue;
+          }
 
           const data = await cobaltRes.json();
           if (data && (data.url || (data.picker && data.picker.length > 0))) {
             const targetUrl = data.url || data.picker[0].url;
-            const caption = `🎬 <b>آماده شد / Ready to watch!</b>\n\n📡 @OneForAllHub`;
+            const caption = `🎬 <b>${escapeHtml(data.filename || 'آماده شد / Ready to watch!')}</b>\n\n📡 @OneForAllHub`;
             
             await sendTelegramVideo(env.BOT_TOKEN, chatId, targetUrl, caption);
             downloaded = true;
             if (statusMsgId) await deleteTelegramMessage(env.BOT_TOKEN, chatId, statusMsgId);
             break;
           }
-        } catch (e) {}
+        } catch (e) {
+          console.error(`[Worker Cobalt ${endpoint}] Error:`, e);
+        }
       }
 
       if (!downloaded) {
@@ -162,18 +208,14 @@ async function sendTelegramVideo(botToken, chatId, videoUrl, caption) {
 
 async function deleteTelegramMessage(botToken, chatId, messageId) {
   const url = `https://api.telegram.org/bot${botToken}/deleteMessage`;
-  await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, message_id: messageId })
-  });
-}
-
-function escapeHtml(text) {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId
+      })
+    });
+  } catch (_) {}
 }
