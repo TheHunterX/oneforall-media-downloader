@@ -59,11 +59,34 @@ jobs:
             sleep 1
           done
 
-      - name: Generate Fallback PO-Token via Node.js
+      - name: Setup Cloudflare WARP via Wireproxy
         run: |
-          npm install -g youtube-po-token-generator || true
-          youtube-po-token-generator > /tmp/pot_token.json 2>&1 || true
-          cat /tmp/pot_token.json || true
+          echo "Downloading wgcf and wireproxy..."
+          sudo curl -fsSL https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64 -o /usr/local/bin/wgcf
+          sudo chmod +x /usr/local/bin/wgcf
+          sudo curl -fsSL https://github.com/whyvl/wireproxy/releases/download/v1.0.9/wireproxy_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin/
+          sudo chmod +x /usr/local/bin/wireproxy
+
+          echo "Registering WARP and generating profile..."
+          wgcf register --accept-tos
+          wgcf generate
+
+          cat << 'EOF' > wireproxy.conf
+          WGConfig = ./wgcf-profile.conf
+
+          [Socks5]
+          BindAddress = 127.0.0.1:1080
+
+          [HTTP]
+          BindAddress = 127.0.0.1:8080
+          EOF
+
+          echo "Starting wireproxy daemon..."
+          wireproxy -c wireproxy.conf -d
+          sleep 3
+
+          echo "Verifying Cloudflare WARP tunnel..."
+          curl -s --proxy http://127.0.0.1:8080 https://www.cloudflare.com/cdn-cgi/trace || true
 
       - name: Install dependencies (yt-dlp, curl_cffi, pytubefix, and ffmpeg)
         run: |
@@ -74,6 +97,8 @@ jobs:
 
       - name: Download Media Engine
         id: dl
+        env:
+          NO_PROXY: "localhost,127.0.0.1"
         run: |
           python scripts/download.py "${{ github.event.inputs.url }}" "${{ github.event.inputs.format }}"
 
