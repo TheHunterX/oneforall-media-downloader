@@ -12,7 +12,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;600;700;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
     
     <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
 
     <style>
         :root {
@@ -232,7 +232,7 @@
             background: rgba(11, 15, 25, 0.8);
             border: 1px solid var(--surface-border);
             border-radius: var(--radius-md);
-            padding: 16px 48px 16px 16px;
+            padding: 16px 48px 16px 90px;
             color: var(--text-main);
             font-size: 1rem;
             outline: none;
@@ -846,12 +846,37 @@
             if (e.key === 'Enter') processDownload();
         });
 
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function sanitizeUrl(rawUrl) {
+            if (!rawUrl) return '';
+            const trimmed = rawUrl.trim();
+            if (trimmed.includes('youtube.com') || trimmed.includes('youtu.be')) {
+                const m = trimmed.match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([a-zA-Z0-9_-]{11})/);
+                if (m && m[1]) return `https://www.youtube.com/watch?v=${m[1]}`;
+            }
+            if (trimmed.includes('instagram.com')) {
+                return trimmed.split('?')[0].replace(/\/+$/, '') + '/';
+            }
+            if (trimmed.includes('tiktok.com') || trimmed.includes('twitter.com') || trimmed.includes('x.com')) {
+                return trimmed.split('?')[0];
+            }
+            return trimmed;
+        }
+
         async function processDownload() {
             const rawUrl = mediaUrlInput.value.trim();
             if (!rawUrl) {
                 showError(i18n[currentLang].errEmptyUrl);
                 return;
             }
+
+            const cleanUrl = sanitizeUrl(rawUrl);
 
             // Reset UI
             resultContainer.style.display = 'block';
@@ -866,17 +891,17 @@
 
             try {
                 // If TikTok, use verified TikWM API
-                if (rawUrl.includes('tiktok.com')) {
+                if (cleanUrl.includes('tiktok.com')) {
                     loaderText.textContent = i18n[currentLang].loaderText;
-                    await downloadTikTok(rawUrl);
+                    await downloadTikTok(cleanUrl);
                     return;
                 }
 
                 // If Instagram / YouTube / Others, use Multi-Instance APIs
                 loaderText.textContent = i18n[currentLang].loaderText;
-                await downloadMultiCloud(rawUrl);
+                await downloadMultiCloud(cleanUrl);
             } catch (err) {
-                console.error(err);
+                console.error('Download error:', err);
                 showError(i18n[currentLang].errFetch);
             } finally {
                 loader.style.display = 'none';
@@ -906,12 +931,11 @@
             throw new Error('TikWM returned non-zero code');
         }
 
-        // Multi Cloud Extractor
+        // Multi Cloud Extractor (Modern Cobalt v10/v11 API)
         async function downloadMultiCloud(url) {
             const endpoints = [
-                'https://api.cobalt.tools/',
-                'https://cobalt.kwiatekm.pl/api/json',
-                'https://capi.wuk.sh/api/json'
+                'https://rue-cobalt.xenon.zone/',
+                'https://cobaltapi.cjs.nz/'
             ];
 
             for (const ep of endpoints) {
@@ -924,9 +948,9 @@
                         },
                         body: JSON.stringify({
                             url: url,
-                            isAudioOnly: selectedFormat === 'audio',
-                            aFormat: 'mp3',
-                            vQuality: '720'
+                            videoQuality: '720',
+                            audioFormat: 'mp3',
+                            downloadMode: selectedFormat === 'audio' ? 'audio' : 'auto'
                         })
                     });
 
@@ -942,7 +966,9 @@
                         });
                         return;
                     }
-                } catch (e) {}
+                } catch (e) {
+                    console.warn(`Endpoint ${ep} failed:`, e);
+                }
             }
             throw new Error('All cloud extractors failed');
         }
@@ -954,9 +980,9 @@
 
             mediaTitle.textContent = title;
             mediaMeta.innerHTML = `
-                ${source ? `<span>${i18n[currentLang].sourceLabel} ${source}</span>` : ''}
-                ${author ? `<span>${i18n[currentLang].authorLabel} ${author}</span>` : ''}
-                <span>${i18n[currentLang].formatSelected} ${type === 'audio' ? i18n[currentLang].mp3Format : i18n[currentLang].mp4Format}</span>
+                ${source ? `<span>${escapeHtml(i18n[currentLang].sourceLabel)} ${escapeHtml(source)}</span>` : ''}
+                ${author ? `<span>${escapeHtml(i18n[currentLang].authorLabel)} ${escapeHtml(author)}</span>` : ''}
+                <span>${escapeHtml(i18n[currentLang].formatSelected)} ${escapeHtml(type === 'audio' ? i18n[currentLang].mp3Format : i18n[currentLang].mp4Format)}</span>
             `;
 
             if (type === 'audio') {
@@ -969,16 +995,31 @@
                 audioPreview.style.display = 'none';
             }
 
-            actionButtons.innerHTML = `
-                <a href="${downloadUrl}" target="_blank" download class="btn-action btn-primary-action">
-                    <i data-lucide="download" style="width: 16px; height: 16px;"></i>
-                    <span>${i18n[currentLang].directDlBtn}</span>
-                </a>
-                <button type="button" class="btn-action btn-secondary-action" onclick="navigator.clipboard.writeText('${downloadUrl}'); alert('${i18n[currentLang].linkCopied}');">
-                    <i data-lucide="copy" style="width: 16px; height: 16px;"></i>
-                    <span>${i18n[currentLang].copyDlBtn}</span>
-                </button>
-            `;
+            actionButtons.innerHTML = '';
+
+            const dlLink = document.createElement('a');
+            dlLink.href = downloadUrl;
+            dlLink.target = '_blank';
+            dlLink.rel = 'noopener noreferrer';
+            dlLink.download = title || 'download';
+            dlLink.className = 'btn-action btn-primary-action';
+            dlLink.innerHTML = `<i data-lucide="download" style="width: 16px; height: 16px;"></i><span>${escapeHtml(i18n[currentLang].directDlBtn)}</span>`;
+
+            const copyBtn = document.createElement('button');
+            copyBtn.type = 'button';
+            copyBtn.className = 'btn-action btn-secondary-action';
+            copyBtn.innerHTML = `<i data-lucide="copy" style="width: 16px; height: 16px;"></i><span>${escapeHtml(i18n[currentLang].copyDlBtn)}</span>`;
+            copyBtn.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(downloadUrl);
+                    alert(i18n[currentLang].linkCopied);
+                } catch (_) {
+                    prompt('Copy link:', downloadUrl);
+                }
+            });
+
+            actionButtons.appendChild(dlLink);
+            actionButtons.appendChild(copyBtn);
             lucide.createIcons();
         }
 
