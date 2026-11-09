@@ -4,5 +4,6 @@ export const downloads = table('downloads', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   chatId: integer('chat_id'),
   url: text('url'),
-  platform: text('platform')
+  platform: text('platform'),
+  createdAt: text('created_at')
 });
