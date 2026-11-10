@@ -1,0 +1,162 @@
+name: Cloud Media Downloader (yt-dlp & pytubefix)
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Video or Post URL (YouTube, Instagram, TikTok, Twitter, etc.)'
+        required: true
+        type: string
+      format:
+        description: 'Output format'
+        required: true
+        default: 'video-720p'
+        type: choice
+        options:
+          - 'video-best'
+          - 'video-1080p'
+          - 'video-720p'
+          - 'video-480p'
+          - 'video-360p'
+          - 'audio-mp3'
+      chat_id:
+        description: 'Telegram chat_id if triggered from telegram bot'
+        required: false
+        type: string
+        default: ''
+      message_id:
+        description: 'Telegram status message_id to edit or delete upon delivery'
+        required: false
+        type: string
+        default: ''
+      send_to_telegram:
+        description: 'Send downloaded file to Telegram channel/bot (requires secrets)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  download:
+    name: Download and Deliver Media
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Start Live Progress Daemon
+        if: github.event.inputs.chat_id != '' && github.event.inputs.message_id != ''
+        continue-on-error: true
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+        run: |
+          python3 scripts/progress_daemon.py \
+            "${{ github.event.inputs.chat_id }}" \
+            "${{ github.event.inputs.message_id }}" \
+            "${{ github.event.inputs.url }}" \
+            "${{ github.event.inputs.format }}" \
+            "/tmp/dl_state.json" > /tmp/progress_daemon.log 2>&1 &
+          echo "Live Progress Daemon started in background"
+
+      - name: Setup FFmpeg & FFprobe
+        uses: FedericoCarboni/setup-ffmpeg@v3
+
+      - name: Install yt-dlp & Browser Impersonation Engine
+        run: |
+          python3 -m pip install --no-cache-dir -U yt-dlp "curl_cffi>=0.10.0"
+
+      - name: Setup Authenticated Cookies (if secret present)
+        env:
+          COOKIES_DATA: ${{ secrets.COOKIES_DATA }}
+        run: |
+          if [ -n "$COOKIES_DATA" ]; then
+            echo "$COOKIES_DATA" > cookies.txt
+            echo "Installed authenticated cookies.txt (${#COOKIES_DATA} bytes)"
+          else
+            echo "No COOKIES_DATA secret provided."
+          fi
+
+      - name: Setup WARP Proxy (Cloudflare High-Speed Edge Tunnel)
+        continue-on-error: true
+        run: |
+          echo "Setting up parallel wgcf & wireproxy for 100% bypass of datacenter IP blocks..."
+          sudo curl -fsSL --connect-timeout 5 --max-time 12 https://github.com/ViRb3/wgcf/releases/download/v2.2.22/wgcf_2.2.22_linux_amd64 -o /usr/local/bin/wgcf &
+          sudo curl -fsSL --connect-timeout 5 --max-time 12 https://github.com/whyvl/wireproxy/releases/download/v1.0.9/wireproxy_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin/ &
+          wait
+          sudo chmod +x /usr/local/bin/wgcf /usr/local/bin/wireproxy || true
+
+          timeout 8 wgcf register --accept-tos || true
+          timeout 5 wgcf generate || true
+          if [ -f wgcf-profile.conf ]; then
+            sed -i 's/engage.cloudflareclient.com/162.159.192.1/g' wgcf-profile.conf || true
+
+            cat << 'EOF' > wireproxy.conf
+          WGConfig = ./wgcf-profile.conf
+
+          [Socks5]
+          BindAddress = 127.0.0.1:1080
+
+          [HTTP]
+          BindAddress = 127.0.0.1:8080
+          EOF
+
+            nohup /usr/local/bin/wireproxy -c wireproxy.conf </dev/null >/tmp/wireproxy.log 2>&1 &
+            disown || true
+
+            for i in 1 2 3 4; do
+              if curl -s --connect-timeout 2 --max-time 3 --proxy http://127.0.0.1:8080 https://www.cloudflare.com/cdn-cgi/trace | grep -q "warp=on"; then
+                echo "Cloudflare WARP proxy is READY!"
+                break
+              fi
+              sleep 1
+            done
+          fi
+
+      - name: Download Media Engine
+        id: dl
+        env:
+          NO_PROXY: "localhost,127.0.0.1"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+          CHAT_ID: ${{ github.event.inputs.chat_id }}
+          MESSAGE_ID: ${{ github.event.inputs.message_id }}
+          DL_STATE_FILE: "/tmp/dl_state.json"
+        run: |
+          python3 scripts/download.py "${{ github.event.inputs.url }}" "${{ github.event.inputs.format }}"
+
+      - name: Stop Progress Daemon
+        if: always()
+        run: |
+          pkill -f progress_daemon.py || true
+          echo "Progress daemon stopped."
+
+      - name: Notify & Deliver to Telegram (via Telegram Cloud V8)
+        if: always() && github.event.inputs.chat_id != ''
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+        run: |
+          python3 scripts/notify_telegram.py \
+            "${{ steps.dl.outputs.filename }}" \
+            "${{ steps.dl.outputs.filesize }}" \
+            "${{ steps.dl.outputs.direct_url }}" \
+            "${{ github.event.inputs.url }}" \
+            "${{ github.event.inputs.format }}" \
+            "${{ github.event.inputs.chat_id }}" \
+            "${{ steps.dl.outputs.actual_res }}" \
+            "${{ steps.dl.outcome }}" \
+            "${{ github.event.inputs.message_id }}" \
+            "${{ steps.dl.outputs.duration }}" \
+            "${{ steps.dl.outputs.width }}" \
+            "${{ steps.dl.outputs.height }}"
+
+      - name: Save Artifact on GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-media
+          path: output/*
+          retention-days: 3

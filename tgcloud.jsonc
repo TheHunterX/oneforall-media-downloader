@@ -1,0 +1,7 @@
+{
+  "$schema": "https://tgcloud.ai/schema.json",
+  "static": {
+    "source": "dist",
+    "spa": true
+  }
+}

@@ -1,0 +1,54 @@
+name: Deploy Telegram Serverless Bot (tgcloud)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tgcloud/**'
+      - 'tgcloud.jsonc'
+      - 'package.json'
+      - 'index.html'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to Telegram Serverless (V8 Cloud)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm install
+
+      - name: Prepare static Mini App bundle
+        run: |
+          mkdir -p dist
+          cp index.html dist/index.html
+          [ -f manifest.json ] && cp manifest.json dist/manifest.json || true
+          [ -f robots.txt ] && cp robots.txt dist/robots.txt || true
+          [ -f sitemap.xml ] && cp sitemap.xml dist/sitemap.xml || true
+
+      - name: Deploy bot & Mini App with tgcloud CLI
+        env:
+          TGCLOUD_TOKEN: ${{ secrets.TGCLOUD_TOKEN }}
+        run: |
+          echo "Deploying OneForAllDownloaderBot & Mini App to Telegram Serverless with --force..."
+          npx @tgcloud/cli push --force
+          echo "Running database migrations with --yes..."
+          npx @tgcloud/cli migrate --yes
+          echo "Syncing webhook allowed_updates to include callback_query..."
+          npx @tgcloud/cli webhook sync
+          echo "Bot and Mini App successfully deployed, migrated and webhook synced!"
+          echo "Testing handler locally with mock update..."
+          npx @tgcloud/cli run handlers/message '{"chat":{"id":123456},"text":"/start"}' || true

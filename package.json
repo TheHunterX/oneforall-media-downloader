@@ -1,0 +1,13 @@
+{
+  "name": "oneforall-downloader-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "push": "tgcloud push",
+    "migrate": "tgcloud migrate"
+  },
+  "devDependencies": {
+    "@tgcloud/cli": "latest"
+  }
+}
