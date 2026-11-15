@@ -82,7 +82,26 @@ import { api } from 'sdk';
 
 export default async function(args) {
     const NL = String.fromCharCode(10);
+    const failText = [
+        '❌ <b>Download Failed</b>',
+        '',
+        'We could not process this media stream. The content may be restricted, private, or temporarily unavailable.',
+        '',
+        '💡 <i>Tip: Try another format or check the URL.</i>',
+        '',
+        '📡 @OneForAllHub'
+    ].join(NL);
+
     if (args.message_id) {
+        try {
+            await api.editMessageText({
+                chat_id: args.chat_id,
+                message_id: args.message_id,
+                parse_mode: 'HTML',
+                text: failText
+            });
+            return { ok: true };
+        } catch (_) {}
         try {
             await api.deleteMessage({
                 chat_id: args.chat_id,
@@ -91,16 +110,6 @@ export default async function(args) {
         } catch (_) {}
     }
     try {
-        const failText = [
-            '❌ <b>Download Failed</b>',
-            '',
-            'We could not process this video stream. The media may be private, age-restricted, or temporarily unavailable.',
-            '',
-            'Please check the link or choose another quality format.',
-            '',
-            '📡 @OneForAllHub'
-        ].join(NL);
-
         await api.sendMessage({
             chat_id: args.chat_id,
             parse_mode: 'HTML',

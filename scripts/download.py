@@ -5,6 +5,8 @@ import time
 import json
 import shutil
 import base64
+import queue
+import threading
 import urllib.request
 import urllib.parse
 import subprocess
@@ -12,9 +14,10 @@ from pathlib import Path
 from typing import Optional
 
 def get_ytdlp_cmd() -> list:
-    if shutil.which("yt-dlp"):
-        return ["yt-dlp"]
-    return [sys.executable, "-m", "yt_dlp"]
+    base = ["yt-dlp"] if shutil.which("yt-dlp") else [sys.executable, "-m", "yt_dlp"]
+    if shutil.which("node"):
+        base.extend(["--js-runtimes", "node", "--remote-components", "ejs:github"])
+    return base
 
 def write_state(status: str, percent: int = 0, text: str = "", remaining: int = 0):
     state_file = os.environ.get("DL_STATE_FILE", "/tmp/dl_state.json")
@@ -41,9 +44,27 @@ def get_cookie_args(for_url: str = "") -> list:
             return ["--cookies", str(c)]
     return []
 
+def resolve_redirect_url(url: str) -> str:
+    """Follow HTTP 301/302 redirects to extract canonical destination URLs (e.g. vt.tiktok.com, pin.it, youtu.be, t.co)."""
+    url_l = url.lower()
+    if any(short in url_l for short in ["vt.tiktok.com", "vm.tiktok.com", "pin.it", "t.co", "youtu.be", "bit.ly"]):
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                resolved = resp.geturl()
+                if resolved and resolved != url:
+                    log(f"Unshortened URL: {url} -> {resolved}")
+                    return resolved
+        except Exception as e:
+            log(f"URL unshortening note ({url}): {e}")
+    return url
+
 def sanitize_url(raw_url: str) -> str:
     """Clean and normalize media URLs, stripping playlists, trackers, and session params."""
-    raw_url = raw_url.strip()
+    raw_url = resolve_redirect_url(raw_url.strip())
     
     # 1. YouTube: Extract pure 11-char video ID and strip playlist/mix parameters
     if "youtube.com" in raw_url or "youtu.be" in raw_url:
@@ -66,6 +87,10 @@ def sanitize_url(raw_url: str) -> str:
     if "twitter.com" in raw_url or "x.com" in raw_url:
         return raw_url.split("?")[0]
 
+    # 5. Pinterest: Strip query trackers
+    if "pinterest.com" in raw_url:
+        return raw_url.split("?")[0]
+
     return raw_url
 
 def extract_media_id(url: str) -> str:
@@ -82,6 +107,9 @@ def extract_media_id(url: str) -> str:
     tw_m = re.search(r'status/([0-9]+)', url)
     if tw_m:
         return tw_m.group(1)
+    pin_m = re.search(r'/pin/([0-9]+)', url)
+    if pin_m:
+        return pin_m.group(1)
     return "".join(c for c in url.split("/")[-1] if c.isalnum() or c in ("-", "_"))[:20] or "media"
 
 def check_warp_proxy() -> Optional[str]:
@@ -97,8 +125,8 @@ def check_warp_proxy() -> Optional[str]:
             pass
     return None
 
-def run_ytdlp_with_progress(cmd: list, env: dict, timeout: int = 45, stage_label: str = "Downloading stream") -> tuple[int, str]:
-    """Execute yt-dlp while streaming stdout in real time to capture live byte progress and speeds."""
+def run_ytdlp_with_progress(cmd: list, env: dict, timeout: int = 40, stage_label: str = "Downloading stream") -> tuple[int, str]:
+    """Execute yt-dlp while streaming stdout in real time with non-blocking queue to capture live byte progress and speeds without hangs."""
     log(f"Executing: {' '.join(cmd[:6])}...")
     proc = subprocess.Popen(
         cmd,
@@ -113,33 +141,56 @@ def run_ytdlp_with_progress(cmd: list, env: dict, timeout: int = 45, stage_label
     start_time = time.time()
     last_update = 0
 
+    out_q = queue.Queue()
+    def enqueue_output(out, q):
+        try:
+            for l in iter(out.readline, ''):
+                q.put(l)
+        except Exception:
+            pass
+        finally:
+            try: out.close()
+            except Exception: pass
+
+    t = threading.Thread(target=enqueue_output, args=(proc.stdout, out_q), daemon=True)
+    t.start()
+
     try:
-        for line in proc.stdout:
-            output_lines.append(line)
-            m = re.search(r'\[download\]\s+([\d\.]+)%\s+of\s+~?([\d\.]+\w+)(?:\s+at\s+([\d\.]+\w+/s))?(?:\s+ETA\s+(\S+))?', line)
-            if m:
-                now = time.time()
-                if now - last_update >= 0.8:
-                    last_update = now
-                    sub_pct = float(m.group(1))
-                    total_mb = m.group(2)
-                    speed = m.group(3) or "10Gbps"
-                    eta_str = m.group(4) or "1s"
-                    scaled_pct = 52 + int(sub_pct * 0.36)
-                    eta_sec = 2
-                    if eta_str:
-                        parts = eta_str.split(":")
-                        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                            eta_sec = int(parts[0]) * 60 + int(parts[1])
-                    report_progress(scaled_pct, f"⚡ {stage_label}: {sub_pct:.0f}% of {total_mb} ({speed})...", max(1, eta_sec))
+        while True:
+            try:
+                line = out_q.get(timeout=0.3)
+                output_lines.append(line)
+                m = re.search(r'\[download\]\s+([\d\.]+)%\s+of\s+~?([\d\.]+\w+)(?:\s+at\s+([\d\.]+\w+/s))?(?:\s+ETA\s+(\S+))?', line)
+                if m:
+                    now = time.time()
+                    if now - last_update >= 0.8:
+                        last_update = now
+                        sub_pct = float(m.group(1))
+                        total_mb = m.group(2)
+                        speed = m.group(3) or "10Gbps"
+                        eta_str = m.group(4) or "1s"
+                        scaled_pct = 52 + int(sub_pct * 0.36)
+                        eta_sec = 2
+                        if eta_str:
+                            parts = eta_str.split(":")
+                            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                                eta_sec = int(parts[0]) * 60 + int(parts[1])
+                        report_progress(scaled_pct, f"⚡ {stage_label}: {sub_pct:.0f}% of {total_mb} ({speed})...", max(1, eta_sec))
+            except queue.Empty:
+                pass
+
+            if proc.poll() is not None:
+                # Drain remaining output lines
+                while not out_q.empty():
+                    output_lines.append(out_q.get_nowait())
+                break
 
             if time.time() - start_time > timeout:
                 proc.kill()
                 log(f"Process timed out after {timeout}s!")
                 break
 
-        proc.wait(timeout=5)
-        return proc.returncode, "".join(output_lines)
+        return proc.returncode if proc.returncode is not None else -1, "".join(output_lines)
     except Exception as e:
         try:
             proc.kill()
@@ -245,6 +296,7 @@ def get_latest_file(output_dir: Path, min_size: int = 1000, prefer_video: bool =
 # =====================================================================
 def download_tiktok_tikwm(url: str, output_dir: Path, is_audio: bool = False) -> Optional[Path]:
     log("Attempting TikTok download via TikWM API (HD No Watermark)...")
+    url = resolve_redirect_url(url)
     api_url = f"https://www.tikwm.com/api/?url={urllib.parse.quote(url)}"
     req = urllib.request.Request(api_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
     try:
@@ -526,6 +578,7 @@ def download_instagram(url: str, output_dir: Path, fmt: str, proxy: Optional[str
 def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] = None) -> Optional[Path]:
     """
     Rock-solid multi-strategy YouTube engine supporting 1080p, 720p, 480p, 360p and 192k MP3.
+    Bypasses YouTube SABR-only streaming experiment and 403 blocks with VisionOS / Android client rotation & pytubefix fallback.
     """
     clean_id = extract_media_id(url)
     report_progress(50, "Connecting to YouTube & extracting streams...")
@@ -542,48 +595,50 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
         env_with_proxy["NO_PROXY"] = "127.0.0.1,localhost"
         env_with_proxy["no_proxy"] = "127.0.0.1,localhost"
 
-    # Select height cap
+    # Select height cap and format filter
     if fmt == "video-1080p":
-        v_filter = "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b"
+        v_filter = "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b/18/best"
     elif fmt == "video-720p":
-        v_filter = "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b"
+        v_filter = "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b/18/best"
     elif fmt == "video-480p":
-        v_filter = "bv*[height<=480]+ba/b[height<=480]/bv*+ba/b"
+        v_filter = "bv*[height<=480]+ba/b[height<=480]/bv*+ba/b/18/best"
     elif fmt == "video-360p":
-        v_filter = "bv*[height<=360]+ba/b[height<=360]/bv*+ba/b"
+        v_filter = "18/bv*[height<=360]+ba/b[height<=360]/b[height<=360]/best"
     elif is_audio:
         v_filter = "ba/b"
     else:
-        v_filter = "bv*+ba/b"
+        v_filter = "bv*+ba/b/18/best"
 
     cookie_args = get_cookie_args(url)
 
     plans = []
-    # Primary: If WARP proxy is active, it provides 100% bypass against YouTube datacenter bot detection
+    # Primary: If Cloudflare WARP proxy is active
     if proxy:
-        plans.append(("WARP proxy anonymous mobile/web", [], ["--extractor-args", "youtube:player_client=android,web"], True))
-        if cookie_args:
-            plans.append(("WARP proxy with cookies", cookie_args, ["--extractor-args", "youtube:player_client=web,mweb"], True))
-        plans.append(("WARP proxy TV client", cookie_args if cookie_args else [], ["--extractor-args", "youtube:player_client=tv"], True))
+        plans.append(("WARP Android/VisionOS client", [], ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True))
+        plans.append(("WARP pure Android client", [], ["--extractor-args", "youtube:player_client=android"], True))
         if not is_audio:
-            plans.append(("WARP proxy progressive MP4", [], ["-f", "18/best[ext=mp4]/best"], True))
+            plans.append(("WARP progressive MP4 format 18", [], ["-f", "18/best[ext=mp4]/best", "--extractor-args", "youtube:player_client=android"], True))
 
-    # Fallbacks: Native direct connection
-    plans.append(("Direct anonymous mobile/web", [], ["--extractor-args", "youtube:player_client=android,web"], False))
-    if cookie_args:
-        plans.append(("Direct with cookies", cookie_args, ["--extractor-args", "youtube:player_client=web,mweb"], False))
-    plans.append(("Direct TV client", cookie_args if cookie_args else [], ["--extractor-args", "youtube:player_client=tv"], False))
+    # Native direct connection (or fallbacks)
+    plans.append(("Direct Android/VisionOS client", [], ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], False))
+    plans.append(("Direct pure Android client", [], ["--extractor-args", "youtube:player_client=android"], False))
     if not is_audio:
-        plans.append(("Direct progressive MP4", [], ["-f", "18/best[ext=mp4]/best"], False))
+        plans.append(("Direct progressive MP4 format 18", [], ["-f", "18/best[ext=mp4]/best", "--extractor-args", "youtube:player_client=android"], False))
+    if cookie_args:
+        plans.append(("Direct with cookies & Android client", cookie_args, ["--extractor-args", "youtube:player_client=default,-web,android"], False))
 
     for plan_name, c_args, extra_args, use_proxy in plans:
         log(f"YouTube Engine trying: {plan_name} (proxy={use_proxy})...")
+        report_progress(53, f"Fetching YouTube stream ({plan_name})...")
         cmd = [
             *get_ytdlp_cmd(),
             "--no-playlist",
             "--force-ipv4",
-            "--socket-timeout", "20",
+            "--socket-timeout", "15",
             "--retries", "2",
+            "--fragment-retries", "3",
+            "--file-access-retries", "2",
+            "--http-chunk-size", "10M",
             "--paths", str(output_dir),
             "-o", f"{clean_id}_OneForAllHub.%(ext)s"
         ] + c_args
@@ -605,7 +660,7 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
         cmd.append(url)
 
         try:
-            code, out_str = run_ytdlp_with_progress(cmd, plan_env, timeout=45, stage_label="Downloading YouTube stream")
+            code, out_str = run_ytdlp_with_progress(cmd, plan_env, timeout=40, stage_label="Downloading YouTube stream")
             log(f"Plan output summary: {out_str[-250:]}")
             f = get_latest_file(output_dir, prefer_video=not is_audio)
             if f and f.stat().st_size > 1000:
@@ -614,6 +669,41 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
         except Exception as pe:
             log(f"Plan {plan_name} note: {pe}")
 
+    # Fallback: Native pytubefix engine with Android client (100% immune to SABR web experiments)
+    log("Invoking native pytubefix fallback engine (Android Client)...")
+    report_progress(60, "Downloading via high-speed native pytubefix engine...")
+    try:
+        from pytubefix import YouTube
+        yt = YouTube(url, client='ANDROID')
+        if is_audio:
+            audio_stream = yt.streams.filter(only_audio=True).order_by('abr').desc().first()
+            if audio_stream:
+                temp_raw = output_dir / f"ptfix_raw_{clean_id}"
+                audio_stream.download(output_path=str(output_dir), filename=temp_raw.name)
+                # Convert to standard 192k MP3 via FFmpeg
+                subprocess.run([
+                    "ffmpeg", "-y", "-i", str(temp_raw),
+                    "-vn", "-ar", "44100", "-ac", "2", "-b:a", "192k",
+                    str(final_output_file)
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                try: temp_raw.unlink()
+                except Exception: pass
+                if final_output_file.exists() and final_output_file.stat().st_size > 1000:
+                    log(f"SUCCESS with pytubefix (Audio MP3): {final_output_file.name} ({final_output_file.stat().st_size} bytes)")
+                    return final_output_file
+        else:
+            video_stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+            if not video_stream:
+                video_stream = yt.streams.filter(file_extension='mp4').order_by('resolution').desc().first()
+            if video_stream:
+                out_path = video_stream.download(output_path=str(output_dir), filename=f"{clean_id}_OneForAllHub.mp4")
+                f = Path(out_path)
+                if f.exists() and f.stat().st_size > 1000:
+                    log(f"SUCCESS with pytubefix (Video MP4): {f.name} ({f.stat().st_size} bytes)")
+                    return f
+    except Exception as pfe:
+        log(f"pytubefix engine note: {pfe}")
+
     return None
 
 # =====================================================================
@@ -621,6 +711,7 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
 # =====================================================================
 def download_pinterest(url: str, output_dir: Path, fmt: str, proxy: Optional[str] = None) -> Optional[Path]:
     log("Attempting native Pinterest HD/4K extractor...")
+    url = resolve_redirect_url(url)
     report_progress(50, "Resolving original Pinterest media asset...")
     clean_id = extract_media_id(url)
     try:
@@ -708,21 +799,28 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: Optional
             *get_ytdlp_cmd(),
             "--verbose",
             "--no-playlist",
-            "--retries", "5",
-            "--socket-timeout", "25",
+            "--retries", "3",
+            "--fragment-retries", "3",
+            "--file-access-retries", "2",
+            "--socket-timeout", "15",
+            "--http-chunk-size", "10M",
             "--paths", str(output_dir),
             "-o", f"{clean_id}_OneForAllHub.%(ext)s"
         ]
+        if "youtube.com" in url or "youtu.be" in url:
+            c.extend(["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"])
         if use_cookies and cookie_args:
             c.extend(cookie_args)
         if is_audio:
-            c.extend(["-x", "--audio-format", "mp3", "--audio-quality", "0"])
+            c.extend(["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0"])
         elif fmt == "video-1080p":
-            c.extend(["-f", "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b", "--merge-output-format", "mp4"])
+            c.extend(["-f", "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b/18/best", "--merge-output-format", "mp4"])
         elif fmt == "video-720p":
-            c.extend(["-f", "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b", "--merge-output-format", "mp4"])
+            c.extend(["-f", "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b/18/best", "--merge-output-format", "mp4"])
+        elif fmt == "video-360p":
+            c.extend(["-f", "18/bv*[height<=360]+ba/b[height<=360]/b[height<=360]/best", "--merge-output-format", "mp4"])
         else:
-            c.extend(["-f", "bv*+ba/b", "--merge-output-format", "mp4"])
+            c.extend(["-f", "bv*+ba/b/18/best", "--merge-output-format", "mp4"])
         c.append(url)
         return c
 
@@ -739,13 +837,13 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: Optional
         log(f"Attempting general yt-dlp download (attempt={attempt+1}, use_cookies={use_c})...")
         cmd = build_cmd(use_cookies=use_c)
         try:
-            code, out_str = run_ytdlp_with_progress(cmd, env_with_proxy, timeout=90, stage_label="Downloading media stream")
-            log("yt-dlp output summary:\n" + out_str[-600:])
+            code, out_str = run_ytdlp_with_progress(cmd, env_with_proxy, timeout=40, stage_label="Downloading media stream")
+            log("yt-dlp output summary:\n" + out_str[-400:])
             f = get_latest_file(output_dir, prefer_video=not is_audio)
-            if f:
+            if f and f.stat().st_size > 1000:
                 return f
-        except subprocess.TimeoutExpired:
-            log("General yt-dlp timed out after 90 seconds.")
+        except Exception as e:
+            log(f"General yt-dlp attempt {attempt+1} note: {e}")
     return get_latest_file(output_dir, prefer_video=not is_audio)
 
 # =====================================================================

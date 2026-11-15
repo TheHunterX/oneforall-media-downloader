@@ -67,7 +67,7 @@ jobs:
 
       - name: Install yt-dlp & Browser Impersonation Engine
         run: |
-          python3 -m pip install --no-cache-dir -U yt-dlp "curl_cffi>=0.10.0"
+          python3 -m pip install --no-cache-dir -U yt-dlp pytubefix "curl_cffi>=0.10.0"
 
       - name: Setup Authenticated Cookies (if secret present)
         env:

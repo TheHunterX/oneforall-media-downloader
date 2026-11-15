@@ -201,10 +201,18 @@ def main():
                 pct = min(54, 48 + int((elapsed - 13) * 0.9))
                 msg = f"📥 Negotiating high-bitrate {platform} streams..."
                 rem = max(1, int(18 - elapsed))
-            else:
-                pct = min(59, 54 + int((elapsed - 20) * 0.4))
+            elif elapsed < 35.0:
+                pct = min(68, 55 + int((elapsed - 20) * 0.8))
                 msg = f"⚡ Streaming media chunks via 10Gbps line..."
-                rem = 4
+                rem = max(2, int(35 - elapsed))
+            elif elapsed < 55.0:
+                pct = min(82, 69 + int((elapsed - 35) * 0.6))
+                msg = f"🎬 Synchronizing streams & muxing container..."
+                rem = max(1, int(55 - elapsed))
+            else:
+                pct = min(88, 83 + int((elapsed - 55) * 0.15))
+                msg = f"📦 Packaging media container & preparing delivery..."
+                rem = 2
 
             if pct > last_sent_percent:
                 send_telegram_update(token, chat_id, message_id, pct, msg, rem, title)
