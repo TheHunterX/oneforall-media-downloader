@@ -1400,35 +1400,44 @@
             if (url.includes('youtube.com') || url.includes('youtu.be')) {
                 platformKey = 'YouTube';
                 platformLabel = 'YouTube';
-            } else if (url.includes('instagram.com')) {
+            } else if (url.includes('instagram.com') || url.includes('ddinstagram.com')) {
                 platformKey = 'Instagram';
                 platformLabel = 'Instagram';
-            } else if (url.includes('twitter.com') || url.includes('x.com')) {
+            } else if (url.includes('twitter.com') || url.includes('x.com') || url.includes('vxtwitter.com') || url.includes('fixvx.com')) {
                 platformKey = 'Twitter';
                 platformLabel = 'Twitter / X';
-            } else if (url.includes('pinterest.com') || url.includes('pin.it')) {
+            } else if (url.includes('pinterest.') || url.includes('pin.it')) {
                 platformKey = 'Universal';
                 platformLabel = 'Pinterest';
+            } else if (url.includes('facebook.com') || url.includes('fb.watch')) {
+                platformKey = 'Universal';
+                platformLabel = 'Facebook';
             } else if (url.includes('soundcloud.com')) {
                 platformKey = 'Universal';
                 platformLabel = 'SoundCloud';
-            } else if (url.includes('reddit.com')) {
+            } else if (url.includes('reddit.com') || url.includes('v.redd.it')) {
                 platformKey = 'Universal';
                 platformLabel = 'Reddit';
             }
 
-            // Extract identifier for deterministic naming
+            // Extract identifier for deterministic naming (Cobalt URL pattern parity)
             let cleanId = '';
-            const ytMatch = url.match(/(?:v=|\/shorts\/|\/embed\/|youtu\.be\/|\/v\/)([a-zA-Z0-9_-]{8,15})/);
+            const ytMatch = url.match(/(?:v=|\/shorts\/|\/live\/|\/embed\/|youtu\.be\/|\/v\/)([a-zA-Z0-9_-]{8,15})/);
             if (ytMatch) cleanId = ytMatch[1];
-            const igMatch = url.match(/(?:reel|p|tv)\/([a-zA-Z0-9_-]+)/);
-            if (igMatch) cleanId = igMatch[1];
+            const igStoryMatch = url.match(/\/stories\/[^/]+\/([0-9]+)/);
+            if (igStoryMatch) cleanId = `story_${igStoryMatch[1]}`;
+            const igMatch = url.match(/\/(?:reels?|p|tv)\/([a-zA-Z0-9_-]+)/);
+            if (!cleanId && igMatch) cleanId = igMatch[1];
             const twMatch = url.match(/status\/([0-9]+)/);
             if (twMatch) cleanId = twMatch[1];
-            const tkMatch = url.match(/video\/([0-9]+)/);
+            const tkMatch = url.match(/(?:video|photo)\/([0-9]+)/);
             if (tkMatch) cleanId = tkMatch[1];
-            const pinMatch = url.match(/pin\/([0-9]+)/);
+            const pinMatch = url.match(/pin\/(?:[^/]+--)?([0-9]+)/);
             if (pinMatch) cleanId = pinMatch[1];
+            const fbMatch = url.match(/(?:reel|videos)\/([0-9]+)/);
+            if (fbMatch) cleanId = `fb_${fbMatch[1]}`;
+            const rdMatch = url.match(/comments\/([a-zA-Z0-9]+)/);
+            if (rdMatch) cleanId = `rd_${rdMatch[1]}`;
 
             if (!cleanId) {
                 const parts = url.split('/').filter(Boolean);

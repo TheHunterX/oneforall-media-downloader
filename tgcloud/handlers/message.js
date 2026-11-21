@@ -60,19 +60,23 @@ async function fetchStreamBytes(url) {
 
 function sanitizeUrl(rawUrl) {
   if (!rawUrl) return rawUrl;
-  const trimmed = rawUrl.trim();
+  let trimmed = rawUrl.trim();
 
-  // 1. YouTube: Extract pure video ID (flexible 8-15 chars) and strip playlist/mix parameters
+  // Normalize Cobalt alt domains
+  trimmed = trimmed.replace(/^https?:\/\/(?:[dg]\.)?ddinstagram\.com\//i, 'https://www.instagram.com/');
+  trimmed = trimmed.replace(/^https?:\/\/(?:www\.)?(?:vxtwitter|fixvx|fxtwitter)\.com\//i, 'https://x.com/');
+
+  // 1. YouTube: Extract pure video ID (including /live/, /shorts/, /embed/, youtu.be)
   if (trimmed.includes('youtube.com') || trimmed.includes('youtu.be')) {
-    const m = trimmed.match(/(?:v=|\/shorts\/|\/embed\/|youtu\.be\/|\/v\/)([a-zA-Z0-9_-]{8,15})/);
+    const m = trimmed.match(/(?:v=|\/shorts\/|\/live\/|\/embed\/|youtu\.be\/|\/v\/)([a-zA-Z0-9_-]{8,15})/);
     if (m && m[1]) {
       return `https://www.youtube.com/watch?v=${m[1]}`;
     }
   }
 
-  // 2. Instagram: Strip ?igsh= and query trackers
+  // 2. Instagram: Strip ?igsh= and query trackers (preserves /reel/, /reels/, /p/, /tv/, /stories/, /share/)
   if (trimmed.includes('instagram.com')) {
-    return trimmed.split('?')[0].replace(/\/+$/, '') + '/';
+    return trimmed.split('?')[0].split('#')[0].replace(/\/+$/, '') + '/';
   }
 
   // 3. TikTok: Strip query parameters
@@ -82,6 +86,16 @@ function sanitizeUrl(rawUrl) {
 
   // 4. Twitter / X: Normalize
   if (trimmed.includes('twitter.com') || trimmed.includes('x.com')) {
+    return trimmed.split('?')[0];
+  }
+
+  // 5. Facebook / Reddit: Strip query trackers (keep ?v= for facebook watch)
+  if (trimmed.includes('facebook.com')) {
+    const vm = trimmed.match(/[?&]v=([0-9]+)/);
+    if (vm && vm[1]) return `https://www.facebook.com/reel/${vm[1]}`;
+    return trimmed.split('?')[0];
+  }
+  if (trimmed.includes('reddit.com')) {
     return trimmed.split('?')[0];
   }
 
@@ -650,11 +664,26 @@ export default async function (event) {
     }
 
     // -------------------------------------------------------------
-    // 8. Instagram Platform: Instant Quality Selection
+    // 8. Instagram Platform (Cobalt URL Patterns: /reel/, /reels/, /p/, /tv/, /share/, /stories/)
     // -------------------------------------------------------------
     if (cleanUrl.includes('instagram.com')) {
-      const scMatch = cleanUrl.match(/(?:reel|p|tv)\/([a-zA-Z0-9_-]+)/);
-      const shortcode = scMatch ? scMatch[1] : 'media';
+      let igTargetUrl = cleanUrl;
+      // Cobalt trick: Instagram /share/ URLs redirect cleanly when requested with curl/7.88.1 User-Agent
+      if (igTargetUrl.includes('/share/')) {
+        try {
+          const shareRes = await fetch(igTargetUrl, {
+            redirect: 'manual',
+            headers: { 'User-Agent': 'curl/7.88.1' }
+          });
+          const loc = shareRes?.headers?.get('location');
+          if (loc && loc.includes('instagram.com')) {
+            igTargetUrl = sanitizeUrl(loc);
+          }
+        } catch (_) {}
+      }
+
+      const igKey = await storeShortUrl(igTargetUrl);
+      const isStory = igTargetUrl.includes('/stories/');
 
       await api.sendMessage({
         chat_id: chatId,
@@ -663,8 +692,8 @@ export default async function (event) {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: isFa ? '🎬 ویدیوی ریلز (HD)' : '🎬 Video / Reel (HD)', callback_data: `ig:video-720p:${shortcode}` },
-              { text: isFa ? '🎵 فایل صوتی MP3' : '🎵 Audio MP3', callback_data: `ig:audio-mp3:${shortcode}` }
+              { text: isFa ? (isStory ? '🎬 دریافت استوری (HD)' : '🎬 ویدیو / پست / ریلز (HD)') : (isStory ? '🎬 Story Media (HD)' : '🎬 Video / Reel / Photo (HD)'), callback_data: `ig:video-720p:${igKey}` },
+              { text: isFa ? '🎵 فایل صوتی MP3' : '🎵 Audio MP3', callback_data: `ig:audio-mp3:${igKey}` }
             ]
           ]
         }

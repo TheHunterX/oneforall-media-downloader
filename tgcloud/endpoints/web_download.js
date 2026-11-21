@@ -15,9 +15,11 @@ export default async function (input, ctx) {
   const low = url.toLowerCase();
   if (low.includes('youtube.com') || low.includes('youtu.be')) platform = 'YouTube';
   else if (low.includes('tiktok.com')) platform = 'TikTok';
-  else if (low.includes('twitter.com') || low.includes('x.com')) platform = 'Twitter';
-  else if (low.includes('instagram.com')) platform = 'Instagram';
-  else if (low.includes('pinterest.com') || low.includes('pin.it')) platform = 'Pinterest';
+  else if (low.includes('twitter.com') || low.includes('x.com') || low.includes('vxtwitter.com') || low.includes('fixvx.com')) platform = 'Twitter';
+  else if (low.includes('instagram.com') || low.includes('ddinstagram.com')) platform = 'Instagram';
+  else if (low.includes('pinterest.') || low.includes('pin.it')) platform = 'Pinterest';
+  else if (low.includes('facebook.com') || low.includes('fb.watch')) platform = 'Facebook';
+  else if (low.includes('reddit.com') || low.includes('v.redd.it')) platform = 'Reddit';
 
   try {
     await db.insert(downloads).values({

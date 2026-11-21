@@ -77,17 +77,39 @@ def notify_user():
     # Handle Failure Case
     if job_status == "failure" or not direct_url:
         print(f"[Notify] Processing failed for chat {chat_id_str}. Sending error notice...")
+        err_code, err_detail = "", ""
+        err_file = Path(os.environ.get("DL_ERROR_FILE", "/tmp/dl_error_reason.txt"))
+        if err_file.exists():
+            try:
+                raw_err = err_file.read_text(encoding="utf-8").strip()
+                if "|" in raw_err:
+                    err_code, err_detail = raw_err.split("|", 1)
+                else:
+                    err_detail = raw_err
+            except Exception:
+                pass
         fail_js = r"""
 import { api } from 'sdk';
 
 export default async function(args) {
     const NL = String.fromCharCode(10);
+    let reasonLine = 'We could not process this media stream. The content may be restricted, private, or temporarily unavailable.';
+    if (args.err_code === 'private') {
+        reasonLine = '🔒 <b>Private Account / Post:</b> This media belongs to a private account and cannot be accessed publicly.';
+    } else if (args.err_code === 'age') {
+        reasonLine = '🔞 <b>Age-Restricted Media:</b> This post has age restrictions that blocked automated access.';
+    } else if (args.err_code === 'unavailable') {
+        reasonLine = '🗑️ <b>Unavailable Media:</b> This post or video has been deleted or removed by the creator.';
+    } else if (args.err_detail) {
+        reasonLine = args.err_detail;
+    }
+
     const failText = [
         '❌ <b>Download Failed</b>',
         '',
-        'We could not process this media stream. The content may be restricted, private, or temporarily unavailable.',
+        reasonLine,
         '',
-        '💡 <i>Tip: Try another format or check the URL.</i>',
+        '💡 <i>Tip: Make sure the post is public, or try another quality format.</i>',
         '',
         '📡 @OneForAllHub'
     ].join(NL);
@@ -126,7 +148,9 @@ export default async function(args) {
             "sources": {"endpoints/notify_failure": fail_js},
             "args": {
                 "chat_id": int(chat_id_str),
-                "message_id": msg_id
+                "message_id": msg_id,
+                "err_code": err_code,
+                "err_detail": err_detail
             }
         }
         try:

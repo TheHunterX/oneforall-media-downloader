@@ -577,19 +577,38 @@ export default async function (input, ctx) {
     }
 
     // ==================================================================
-    // Case 3: Instagram ("ig:<format>:<shortcode>")
+    // Case 3: Instagram ("ig:<format>:<shortKeyOrShortcode>")
     // ==================================================================
     if (data.startsWith('ig:')) {
       const parts = data.split(':');
       const fmt = parts[1] || 'video-720p';
-      const shortcode = parts[2];
-      const igUrl = `https://www.instagram.com/reel/${shortcode}/`;
+      const rawParam = parts.slice(2).join(':');
+      const resolved = await resolveShortUrl(rawParam);
+      let igUrl = (resolved && resolved.startsWith('http'))
+        ? resolved
+        : `https://www.instagram.com/reel/${rawParam}/`;
+
+      // Resolve /share/ links with Cobalt's curl User-Agent if not resolved earlier
+      if (igUrl.includes('/share/')) {
+        try {
+          const sr = await fetch(igUrl, { redirect: 'manual', headers: { 'User-Agent': 'curl/7.88.1' } });
+          const loc = sr?.headers?.get('location');
+          if (loc && loc.includes('instagram.com')) {
+            igUrl = loc.split('?')[0].replace(/\/+$/, '') + '/';
+          }
+        } catch (_) {}
+      }
+
+      const scMatch = igUrl.match(/\/(?:reels?|p|tv)\/([a-zA-Z0-9_-]+)/);
+      const storyMatch = igUrl.match(/\/stories\/[^/]+\/([0-9]+)/);
+      const shortcode = scMatch ? scMatch[1] : '';
+      const mediaId = shortcode || (storyMatch ? `story_${storyMatch[1]}` : 'ig_media');
       const isAudio = fmt === 'audio-mp3';
       const ext = isAudio ? 'mp3' : 'mp4';
-      const targetFilename = `${shortcode}_OneForAllHub.${ext}`;
-      const title = isAudio ? 'Downloading Instagram Audio MP3...' : 'Downloading Instagram Reel (HD)...';
+      const targetFilename = `${mediaId}_OneForAllHub.${ext}`;
+      const title = isAudio ? 'Downloading Instagram Audio MP3...' : 'Downloading Instagram Media (HD)...';
 
-      await updateStatusMessage(chatId, messageId, 25, '🚀 Booting 10Gbps Cloud Runner (allocating VM)...', 10, title);
+      await updateStatusMessage(chatId, messageId, 20, '⚡ Checking Cobalt Instant Edge Engine...', 4, title);
 
       try {
         await db.insert(downloads).values({
@@ -600,11 +619,112 @@ export default async function (input, ctx) {
         }).run();
       } catch (_) {}
 
-      const matched = await checkReleaseCache(targetFilename);
-      if (matched && matched.browser_download_url) {
-        const ok = await deliverCachedMedia(chatId, messageId, matched, isAudio ? 'Audio MP3 (Original 192kbps)' : 'Instagram Reel (HD)', isAudio, shortcode);
-        if (ok) return;
+      // 1. Check Release CDN Cache first (< 0.5s)
+      if (shortcode) {
+        const matched = await checkReleaseCache(targetFilename);
+        if (matched && matched.browser_download_url) {
+          const ok = await deliverCachedMedia(chatId, messageId, matched, isAudio ? 'Audio MP3 (Original 192kbps)' : 'Instagram HD', isAudio, shortcode);
+          if (ok) return;
+        }
       }
+
+      // 2. Cobalt Instant Edge Path (< 2s): Public /p/<sc>/embed/captioned/ directly from TGCloud V8!
+      if (!isAudio && shortcode) {
+        try {
+          const embRes = await fetch(`https://www.instagram.com/p/${shortcode}/embed/captioned/`, {
+            headers: {
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+              'Accept-Language': 'en-GB,en;q=0.9',
+              'Cache-Control': 'max-age=0',
+              'Dnt': '1',
+              'Sec-Ch-Ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+              'Sec-Ch-Ua-Mobile': '?0',
+              'Sec-Ch-Ua-Platform': '"macOS"',
+              'Sec-Fetch-Dest': 'document',
+              'Sec-Fetch-Mode': 'navigate',
+              'Sec-Fetch-Site': 'none',
+              'Sec-Fetch-User': '?1',
+              'Upgrade-Insecure-Requests': '1',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
+            }
+          });
+          if (embRes.ok) {
+            const embHtml = await embRes.text();
+            const initM = embHtml.match(/"init",\[\],\[(.*?)\]\],/);
+            if (initM && initM[1]) {
+              const ed = JSON.parse(initM[1]);
+              if (ed && ed.contextJSON) {
+                const ctx = JSON.parse(ed.contextJSON);
+                const sm = ctx?.gql_data?.shortcode_media || ctx?.gql_data?.xdt_shortcode_media;
+                if (sm) {
+                  let directUrl = null;
+                  let isPhoto = false;
+                  const sidecar = sm.edge_sidecar_to_children?.edges;
+                  if (Array.isArray(sidecar) && sidecar.length > 0) {
+                    const vidNode = sidecar.find(e => e.node?.is_video && e.node?.video_url)?.node;
+                    if (vidNode) {
+                      directUrl = vidNode.video_url;
+                    } else if (sidecar[0]?.node?.display_url) {
+                      directUrl = sidecar[0].node.display_url;
+                      isPhoto = true;
+                    }
+                  } else if (sm.video_url) {
+                    directUrl = sm.video_url;
+                  } else if (sm.display_url) {
+                    directUrl = sm.display_url;
+                    isPhoto = true;
+                  }
+
+                  if (directUrl) {
+                    await updateStatusMessage(chatId, messageId, 75, '⚡ Streaming HD Instagram media directly to chat...', 1, title);
+                    const mediaBytes = await fetchSingleRange(directUrl, null);
+                    if (mediaBytes && mediaBytes.length > 1000 && mediaBytes.length <= 24 * 1024 * 1024) {
+                      const sizeMb = (mediaBytes.length / (1024 * 1024)).toFixed(1);
+                      const NL = String.fromCharCode(10);
+                      const caption = [
+                        '✅ <b>Your Instagram Media is Ready!</b>',
+                        '',
+                        `🎯 <b>Quality:</b> <b>Original HD (${isPhoto ? 'Photo' : 'MP4'})</b>`,
+                        `📦 <b>Size:</b> <b>${sizeMb} MB</b>`,
+                        '',
+                        '📡 @OneForAllHub'
+                      ].join(NL);
+                      if (isPhoto) {
+                        await api.sendPhoto({
+                          chat_id: chatId,
+                          photo: new InputFile(mediaBytes, `${shortcode}_OneForAllHub.jpg`),
+                          caption,
+                          parse_mode: 'HTML'
+                        });
+                      } else {
+                        const dur = parseMp4Duration(mediaBytes);
+                        const vParams = {
+                          chat_id: chatId,
+                          video: new InputFile(mediaBytes, `${shortcode}_OneForAllHub.mp4`),
+                          caption,
+                          parse_mode: 'HTML',
+                          supports_streaming: true
+                        };
+                        if (dur > 0) vParams.duration = dur;
+                        await api.sendVideo(vParams);
+                      }
+                      if (messageId) {
+                        try { await api.deleteMessage({ chat_id: chatId, message_id: messageId }); } catch (_) {}
+                      }
+                      return;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (igEdgeErr) {
+          console.warn('Instagram Cobalt Edge note (falling back to Cloud Engine):', igEdgeErr.message);
+        }
+      }
+
+      // 3. Fallback: 10Gbps GitHub Actions Cobalt Authenticated Engine (Age-restricted / Embed-broken / >24MB / Stories / MP3)
+      await updateStatusMessage(chatId, messageId, 30, '🚀 Booting 10Gbps Cobalt Cloud Runner (Authenticated Web/Mobile API)...', 10, title);
 
       try {
         await dispatchCloudWorkflow({
@@ -631,13 +751,20 @@ export default async function (input, ctx) {
       const isAudio = fmt === 'audio-mp3';
       const title = isAudio ? 'Downloading Audio MP3...' : 'Downloading Media (Best Quality)...';
 
+      let genPlatform = 'Other';
+      const lowGen = rawUrl.toLowerCase();
+      if (lowGen.includes('facebook.com') || lowGen.includes('fb.watch')) genPlatform = 'Facebook';
+      else if (lowGen.includes('reddit.com') || lowGen.includes('v.redd.it')) genPlatform = 'Reddit';
+      else if (lowGen.includes('pinterest.') || lowGen.includes('pin.it')) genPlatform = 'Pinterest';
+      else if (lowGen.includes('instagram.com')) genPlatform = 'Instagram';
+
       await updateStatusMessage(chatId, messageId, 25, '🚀 Booting 10Gbps Universal Cloud Engine (allocating VM)...', 12, title);
 
       try {
         await db.insert(downloads).values({
           chatId: Number(chatId),
           url: rawUrl,
-          platform: 'Other',
+          platform: genPlatform,
           createdAt: new Date().toISOString()
         }).run();
       } catch (_) {}
