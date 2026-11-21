@@ -1,7 +1,7 @@
 import { api, fetch, InputFile } from 'sdk';
 import { db } from 'sdk/db';
 import { downloads } from '../schema.js';
-import { getGithubToken, dispatchCloudWorkflow, resolveShortUrl } from '../lib/vault.js';
+import { getGithubToken, dispatchCloudWorkflow, resolveShortUrl, storeFailureReport } from '../lib/vault.js';
 import { getUserLang, setUserLang, texts, buildStartMessage } from '../lib/i18n.js';
 
 const ADMIN_IDS = new Set([369287480, 369693896, 0x160914c8]); // Primary Admin Auth
@@ -341,6 +341,85 @@ export default async function (input, ctx) {
     const lang = await getUserLang(userId);
     const t = texts[lang] || texts.en;
     const isFa = lang === 'fa';
+
+    // ==================================================================
+    // Case -2: User Reports Failed Download to Admin ("report_err|<key>")
+    // ==================================================================
+    if (data === 'report_err_done') {
+      try {
+        await api.answerCallbackQuery({
+          callback_query_id: callbackQueryId,
+          text: isFa ? '✅ این گزارش قبلاً برای ادمین ارسال شده است.' : '✅ Already sent to Admin! We are looking into it.'
+        });
+      } catch (_) {}
+      return;
+    }
+
+    if (data.startsWith('report_err|')) {
+      const errKey = data.slice('report_err|'.length).trim();
+      let report = { url: '', format: '', err_code: '', err_detail: '', ts: new Date().toISOString() };
+      try {
+        const raw = await resolveShortUrl(errKey);
+        if (raw && raw.startsWith('{')) {
+          report = { ...report, ...JSON.parse(raw) };
+        }
+      } catch (_) {}
+
+      const fromUser = query?.from || {};
+      const fullName = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ') || 'Unknown';
+      const usernameStr = fromUser.username ? `@${fromUser.username}` : 'no username';
+      const errSummary = [report.err_code, report.err_detail].filter(Boolean).join(' — ') || 'Unknown download failure';
+
+      const adminMsg = [
+        '🛠 <b>User Bug Report — Download Failed</b>',
+        '',
+        `👤 <b>User:</b> ${escapeHtml(fullName)} (${escapeHtml(usernameStr)}) | <code>${escapeHtml(String(userId))}</code>`,
+        `🔗 <b>Link:</b> ${report.url ? `<code>${escapeHtml(report.url)}</code>` : '<i>Not captured</i>'}`,
+        `🎯 <b>Format:</b> <code>${escapeHtml(report.format || 'auto')}</code>`,
+        `❌ <b>Error:</b> ${escapeHtml(errSummary)}`,
+        `🕒 <b>Time:</b> <code>${escapeHtml(report.ts || new Date().toISOString())}</code>`
+      ].join('\n');
+
+      const adminTargets = [...new Set([...ADMIN_IDS])];
+      for (const adminId of adminTargets) {
+        try {
+          await api.sendMessage({
+            chat_id: adminId,
+            parse_mode: 'HTML',
+            disable_web_page_preview: true,
+            text: adminMsg
+          });
+        } catch (adminErr) {
+          console.warn(`Failed to notify admin ${adminId}:`, adminErr?.message || adminErr);
+        }
+      }
+
+      try {
+        await api.answerCallbackQuery({
+          callback_query_id: callbackQueryId,
+          text: isFa ? '✅ لینک و خطا برای ادمین ارسال شد! به‌زودی بررسی می‌شود.' : '✅ Sent to Admin! We will investigate and fix this issue.',
+          show_alert: true
+        });
+      } catch (_) {}
+
+      if (messageId) {
+        try {
+          await api.editMessageReplyMarkup({
+            chat_id: chatId,
+            message_id: messageId,
+            reply_markup: {
+              inline_keyboard: [[
+                {
+                  text: isFa ? '✅ برای ادمین ارسال شد' : '✅ Sent to Admin (Reported)',
+                  callback_data: 'report_err_done'
+                }
+              ]]
+            }
+          });
+        } catch (_) {}
+      }
+      return;
+    }
 
     // ==================================================================
     // Case -1: Choose / Set Language (choose_lang / set_lang:xx)
@@ -736,6 +815,14 @@ export default async function (input, ctx) {
         });
       } catch (err) {
         console.error('Instagram dispatch error:', err);
+        const errKey = await storeFailureReport({ url: igUrl, format: fmt, errCode: 'dispatch_error', errDetail: err?.message || String(err), chatId });
+        const failText = `❌ <b>Download Failed</b>\n\nCloud runner could not be started for this link.\n\n📡 @OneForAllHub`;
+        const kb = { inline_keyboard: [[{ text: '🛠 Send to Admin (Fix Problem)', callback_data: `report_err|${errKey}` }]] };
+        try {
+          await api.editMessageText({ chat_id: chatId, message_id: messageId, parse_mode: 'HTML', text: failText, reply_markup: kb });
+        } catch (_) {
+          try { await api.sendMessage({ chat_id: chatId, parse_mode: 'HTML', text: failText, reply_markup: kb }); } catch (_) {}
+        }
       }
       return;
     }
@@ -779,6 +866,14 @@ export default async function (input, ctx) {
         });
       } catch (err) {
         console.error('Universal dispatch error:', err);
+        const errKey = await storeFailureReport({ url: rawUrl, format: fmt, errCode: 'dispatch_error', errDetail: err?.message || String(err), chatId });
+        const failText = `❌ <b>Download Failed</b>\n\nCloud runner could not be started for this link.\n\n📡 @OneForAllHub`;
+        const kb = { inline_keyboard: [[{ text: '🛠 Send to Admin (Fix Problem)', callback_data: `report_err|${errKey}` }]] };
+        try {
+          await api.editMessageText({ chat_id: chatId, message_id: messageId, parse_mode: 'HTML', text: failText, reply_markup: kb });
+        } catch (_) {
+          try { await api.sendMessage({ chat_id: chatId, parse_mode: 'HTML', text: failText, reply_markup: kb }); } catch (_) {}
+        }
       }
       return;
     }

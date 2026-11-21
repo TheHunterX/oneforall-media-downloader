@@ -94,6 +94,7 @@ def notify_user():
                 pass
         fail_js = r"""
 import { api } from 'sdk';
+import { db, sql } from 'sdk/db';
 
 export default async function(args) {
     const NL = String.fromCharCode(10);
@@ -108,15 +109,35 @@ export default async function(args) {
         reasonLine = args.err_detail;
     }
 
+    const errKey = 'err_' + Math.random().toString(36).substring(2, 10);
+    try {
+        const reportPayload = JSON.stringify({
+            url: String(args.raw_url || ''),
+            format: String(args.req_fmt || ''),
+            err_code: String(args.err_code || ''),
+            err_detail: String(args.err_detail || 'Download engine failed to retrieve media'),
+            chat_id: String(args.chat_id || ''),
+            ts: new Date().toISOString()
+        });
+        await db.run(sql`CREATE TABLE IF NOT EXISTS url_cache (k TEXT PRIMARY KEY, u TEXT)`);
+        await db.run(sql`INSERT OR REPLACE INTO url_cache (k, u) VALUES (${errKey}, ${reportPayload})`);
+    } catch (_) {}
+
     const failText = [
         '❌ <b>Download Failed</b>',
         '',
         reasonLine,
         '',
-        '💡 <i>Tip: Make sure the post is public, or try another quality format.</i>',
+        '💡 <i>Tip: Make sure the post is public, or tap the button below to report this link to Admin.</i>',
         '',
         '📡 @OneForAllHub'
     ].join(NL);
+
+    const failKeyboard = {
+        inline_keyboard: [[
+            { text: '🛠 Send to Admin (Fix Problem)', callback_data: 'report_err|' + errKey }
+        ]]
+    };
 
     if (args.message_id) {
         try {
@@ -124,7 +145,18 @@ export default async function(args) {
                 chat_id: args.chat_id,
                 message_id: args.message_id,
                 parse_mode: 'HTML',
-                text: failText
+                text: failText,
+                reply_markup: failKeyboard
+            });
+            return { ok: true };
+        } catch (_) {}
+        try {
+            await api.editMessageCaption({
+                chat_id: args.chat_id,
+                message_id: args.message_id,
+                parse_mode: 'HTML',
+                caption: failText,
+                reply_markup: failKeyboard
             });
             return { ok: true };
         } catch (_) {}
@@ -139,7 +171,8 @@ export default async function(args) {
         await api.sendMessage({
             chat_id: args.chat_id,
             parse_mode: 'HTML',
-            text: failText
+            text: failText,
+            reply_markup: failKeyboard
         });
     } catch (e) {
         console.error('Failed to send failure alert:', e);
@@ -154,7 +187,9 @@ export default async function(args) {
                 "chat_id": int(chat_id_str),
                 "message_id": msg_id,
                 "err_code": err_code,
-                "err_detail": err_detail
+                "err_detail": err_detail,
+                "raw_url": raw_url,
+                "req_fmt": req_fmt
             }
         }
         try:

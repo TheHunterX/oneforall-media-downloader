@@ -69,6 +69,28 @@ export async function storeShortUrl(url) {
 }
 
 /**
+ * Stores a failure report payload in url_cache under a short key (err_xxxxxxxx)
+ * so Telegram's 64-byte callback_data limit is never exceeded.
+ */
+export async function storeFailureReport({ url = '', format = '', errCode = '', errDetail = '', chatId = '' }) {
+  const key = 'err_' + Math.random().toString(36).substring(2, 10);
+  const payload = JSON.stringify({
+    url: String(url || ''),
+    format: String(format || ''),
+    err_code: String(errCode || ''),
+    err_detail: String(errDetail || ''),
+    chat_id: String(chatId || ''),
+    ts: new Date().toISOString()
+  });
+  _urlCache.set(key, payload);
+  try {
+    await db.run(sql`CREATE TABLE IF NOT EXISTS url_cache (k TEXT PRIMARY KEY, u TEXT)`);
+    await db.run(sql`INSERT OR REPLACE INTO url_cache (k, u) VALUES (${key}, ${payload})`);
+  } catch (_) {}
+  return key;
+}
+
+/**
  * Resolves a short key back to the original URL.
  */
 export async function resolveShortUrl(keyOrUrl) {
