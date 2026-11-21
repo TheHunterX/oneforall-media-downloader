@@ -131,6 +131,15 @@ def main():
             (78, "⚡ Downloading watermark-free crystal stream...", 2),
             (95, "🚀 Packaging MP4 container for instant delivery...", 0)
         ]
+    elif "spotify.com" in url_low or "spotify.link" in url_low or "spoti.fi" in url_low:
+        platform = "Spotify"
+        is_audio = True
+        stages = [
+            (32, "🎵 10Gbps Audio Runner allocated | Resolving Spotify track metadata...", 8),
+            (55, "🔍 Matching studio-quality audio stream & album artwork...", 5),
+            (78, "🎧 Mastering 192kbps MP3 & embedding ID3v2 tags...", 3),
+            (95, "🚀 Delivering Spotify MP3 with album cover to chat...", 0)
+        ]
     else:
         platform = "Media"
         stages = [

@@ -153,8 +153,8 @@ def resolve_redirect_url(url: str) -> str:
         except Exception as e:
             log(f"Facebook unshorten note: {e}")
 
-    # 4. TikTok short links (vt.tiktok.com, vm.tiktok.com, tiktok.com/t/) + Reddit /s/ + v.redd.it + t.co + youtu.be + bit.ly
-    if any(short in url_l for short in ["vt.tiktok.com", "vm.tiktok.com", "tiktok.com/t/", "pin.it", "t.co", "youtu.be", "bit.ly", "v.redd.it", "/s/"]):
+    # 4. TikTok short links (vt.tiktok.com, vm.tiktok.com, tiktok.com/t/) + Spotify (spotify.link, spoti.fi) + Reddit /s/ + v.redd.it + t.co + youtu.be + bit.ly
+    if any(short in url_l for short in ["vt.tiktok.com", "vm.tiktok.com", "tiktok.com/t/", "spotify.link", "spoti.fi", "pin.it", "t.co", "youtu.be", "bit.ly", "v.redd.it", "/s/"]):
         try:
             ua = GENERIC_CHROME_UA.split(" Chrome/1")[0] if "tiktok.com" in url_l else GENERIC_CHROME_UA
             req = urllib.request.Request(url, headers={"User-Agent": ua})
@@ -221,10 +221,19 @@ def sanitize_url(raw_url: str) -> str:
     if "reddit.com" in raw_url:
         return raw_url.split("?")[0]
 
+    # 8. Spotify: Strip /intl-xx/ locale segment and ?si= query trackers
+    if "spotify.com" in raw_url:
+        clean = raw_url.split("?")[0].split("#")[0]
+        clean = re.sub(r'open\.spotify\.com/intl-[a-z-]+/', 'open.spotify.com/', clean, flags=re.IGNORECASE)
+        return clean
+
     return raw_url
 
 def extract_media_id(url: str) -> str:
     """Extract a safe identifier for deterministic file naming."""
+    sp_m = re.search(r'spotify\.com/(?:intl-[a-z-]+/)?(?:track|album|playlist|episode)/([a-zA-Z0-9]+)', url)
+    if sp_m:
+        return f"sp_{sp_m.group(1)}"
     yt_m = re.search(r'(?:v=|/shorts/|/live/|/embed/|youtu\.be/|/v/)([a-zA-Z0-9_-]{8,15})', url)
     if yt_m:
         return yt_m.group(1)
@@ -1591,6 +1600,218 @@ def download_reddit(url: str, output_dir: Path, fmt: str, proxy: Optional[str] =
         log(f"Cobalt Reddit note: {re_err}")
     return None
 
+# =====================================================================
+# 4.8. Spotify Dedicated Engine (Zero-Auth Embed Metadata + Duration-Matched YT/SoundCloud/pytubefix Audio + ID3 & Cover Art)
+# =====================================================================
+def fetch_spotify_metadata(url: str) -> Optional[dict]:
+    """Resolve Spotify track/album/playlist/episode title, artist, duration, and 640x640 cover art without API keys."""
+    m = re.search(r'spotify\.com/(?:intl-[a-z-]+/)?(track|album|playlist|episode)/([a-zA-Z0-9]+)', url)
+    if not m:
+        return None
+    kind, item_id = m.group(1), m.group(2)
+    headers = {"User-Agent": GENERIC_CHROME_UA, "Accept-Language": "en-US,en;q=0.9"}
+
+    # Method 1: Official Spotify Embed __NEXT_DATA__ (< 300ms, full structured metadata)
+    try:
+        req = urllib.request.Request(f"https://open.spotify.com/embed/{kind}/{item_id}", headers=headers)
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+        nd_m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html, re.DOTALL)
+        if nd_m:
+            nd = json.loads(nd_m.group(1))
+            ent = (((nd.get("props") or {}).get("pageProps") or {}).get("state") or {}).get("data", {}).get("entity") or {}
+            imgs = (ent.get("visualIdentity") or {}).get("image") or []
+            cover = imgs[0].get("url") if imgs else ""
+            if kind in ("album", "playlist") and ent.get("trackList"):
+                t0 = ent["trackList"][0]
+                title = t0.get("title") or ent.get("name") or ""
+                artist = t0.get("subtitle") or ""
+                dur_sec = round((t0.get("duration") or 0) / 1000)
+                if title:
+                    return {"id": item_id, "kind": kind, "title": title, "artist": artist, "duration_sec": dur_sec, "cover": cover}
+            else:
+                title = ent.get("name") or ent.get("title") or ""
+                artists = [a.get("name") for a in (ent.get("artists") or []) if a.get("name")]
+                artist = ", ".join(artists) or ent.get("subtitle") or ""
+                dur_sec = round((ent.get("duration") or 0) / 1000)
+                if title:
+                    return {"id": item_id, "kind": kind, "title": title, "artist": artist, "duration_sec": dur_sec, "cover": cover}
+    except Exception as se:
+        log(f"Spotify Embed metadata note: {se}")
+
+    # Method 2: Official Spotify oEmbed fallback
+    try:
+        oe_url = f"https://open.spotify.com/oembed?url={urllib.parse.quote(url)}"
+        req = urllib.request.Request(oe_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            oe = json.loads(resp.read().decode("utf-8", errors="ignore"))
+        if oe.get("title"):
+            return {
+                "id": item_id,
+                "kind": kind,
+                "title": oe["title"],
+                "artist": oe.get("author_name") or "",
+                "duration_sec": 0,
+                "cover": oe.get("thumbnail_url") or "",
+            }
+    except Exception as oe_err:
+        log(f"Spotify oEmbed note: {oe_err}")
+    return None
+
+def download_spotify(url: str, output_dir: Path, fmt: str, proxy: Optional[str] = None) -> Optional[Path]:
+    """Download full-length studio 192kbps MP3 for Spotify links with official cover art and ID3 metadata."""
+    log("Attempting Spotify download via Zero-Auth Metadata + Multi-Source Audio Engine...")
+    report_progress(50, "🎵 Resolving Spotify track metadata & album cover art...")
+    url = sanitize_url(url)
+    clean_id = extract_media_id(url)
+    final_mp3 = output_dir / f"{clean_id}_OneForAllHub.mp3"
+
+    meta = fetch_spotify_metadata(url)
+    if not meta or not meta.get("title"):
+        log("Could not resolve Spotify track metadata.")
+        set_error_reason("unavailable", "Could not find this Spotify track. Please verify the link is public.")
+        return None
+
+    title = meta["title"].strip()
+    artist = (meta.get("artist") or "").strip()
+    dur_sec = int(meta.get("duration_sec") or 0)
+    cover_url = meta.get("cover") or ""
+    query = f"{artist} - {title}" if artist else title
+    log(f"Spotify Metadata Resolved: '{title}' by '{artist}' ({dur_sec}s)")
+
+    # Persist Spotify metadata for notify_telegram & post-processing
+    try:
+        with open("/tmp/spotify_meta.json", "w", encoding="utf-8") as sf:
+            json.dump({"title": title, "artist": artist, "duration": dur_sec, "cover": cover_url}, sf)
+    except Exception:
+        pass
+
+    # Download official high-res Spotify album cover art thumbnail immediately
+    thumb_path = output_dir / f"{clean_id}_OneForAllHub_thumb.jpg"
+    if cover_url:
+        try:
+            c_req = urllib.request.Request(cover_url, headers={"User-Agent": GENERIC_CHROME_UA})
+            with urllib.request.urlopen(c_req, timeout=10) as cr:
+                thumb_path.write_bytes(cr.read())
+            log(f"Downloaded Spotify album cover art: {thumb_path.stat().st_size} bytes")
+        except Exception as ce:
+            log(f"Spotify cover art note: {ce}")
+
+    env_with_proxy = {**os.environ}
+    if proxy:
+        env_with_proxy["HTTP_PROXY"] = proxy
+        env_with_proxy["HTTPS_PROXY"] = proxy
+        env_with_proxy["http_proxy"] = proxy
+        env_with_proxy["https_proxy"] = proxy
+        env_with_proxy["NO_PROXY"] = "127.0.0.1,localhost"
+        env_with_proxy["no_proxy"] = "127.0.0.1,localhost"
+
+    has_cookies = _find_master_cookies_file() is not None
+    dur_filter = []
+    if dur_sec > 20:
+        min_d = max(15, dur_sec - 45)
+        max_d = dur_sec + 65
+        dur_filter = ["--match-filter", f"duration >= {min_d} & duration <= {max_d}"]
+
+    search_plans = []
+    # Tier 1: YouTube Audio Search (WARP + Direct + Authenticated Cookies)
+    yt_query = f"ytsearch3:{query} audio"
+    if proxy:
+        search_plans.append(("WARP YouTube Audio Search", yt_query, False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True, True))
+        if has_cookies:
+            search_plans.append(("WARP Authenticated YouTube Search", yt_query, True, ["--extractor-args", "youtube:player_client=default,-android,-ios"], True, True))
+    search_plans.append(("Direct YouTube Audio Search", yt_query, False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], False, True))
+    if has_cookies:
+        search_plans.append(("Direct Authenticated YouTube Search", yt_query, True, ["--extractor-args", "youtube:player_client=default,-android,-ios"], False, True))
+    # Tier 2: SoundCloud Search Fallback (zero YouTube bot checks!)
+    search_plans.append(("SoundCloud Audio Search", f"scsearch2:{query}", False, [], bool(proxy), False))
+
+    raw_audio_file = None
+    for plan_name, search_expr, use_cookies, extra_args, use_proxy, use_dur_filter in search_plans:
+        log(f"Spotify Engine trying: {plan_name} -> {search_expr}")
+        report_progress(56, f"🎵 Matching studio audio ({title[:28]})...")
+        c_args = get_cookie_args("https://www.youtube.com/watch?v=x") if use_cookies else []
+        cmd = [
+            *get_ytdlp_cmd(),
+            "--max-downloads", "1",
+            "--force-ipv4",
+            "--socket-timeout", "15",
+            "--retries", "2",
+            "--fragment-retries", "3",
+            "--paths", str(output_dir),
+            "-o", f"sp_raw_{clean_id}.%(ext)s",
+            "-f", "ba/b",
+        ] + c_args + extra_args
+        if use_dur_filter and dur_filter:
+            cmd.extend(dur_filter)
+        plan_env = env_with_proxy if (use_proxy and proxy) else {k: v for k, v in os.environ.items() if not k.lower().endswith("proxy")}
+        if use_proxy and proxy:
+            cmd.extend(["--proxy", proxy])
+        cmd.append(search_expr)
+
+        try:
+            _, out_s = run_ytdlp_with_progress(cmd, plan_env, timeout=40, stage_label="Downloading Spotify audio track")
+            log(f"Spotify plan output: {out_s[-220:]}")
+            candidates = [f for f in output_dir.glob(f"sp_raw_{clean_id}.*") if f.is_file() and not f.name.endswith(".part") and f.stat().st_size > 10000]
+            if candidates:
+                raw_audio_file = candidates[0]
+                log(f"Spotify audio matched via {plan_name}: {raw_audio_file.name} ({raw_audio_file.stat().st_size} bytes)")
+                break
+        except Exception as pe:
+            log(f"Spotify plan {plan_name} note: {pe}")
+
+    # Tier 3: pytubefix Search fallback (proxy aware)
+    if not raw_audio_file:
+        log("Spotify Tier 3: pytubefix Search fallback...")
+        try:
+            from pytubefix import Search, YouTube
+            s = Search(f"{query} audio")
+            results = (s.videos or [])[:5]
+            if results:
+                chosen = results[0]
+                if dur_sec > 20:
+                    chosen = min(results, key=lambda v: abs((getattr(v, "length", 0) or 0) - dur_sec))
+                pt_proxies = {"http": proxy, "https": proxy} if proxy else None
+                yt = YouTube(chosen.watch_url, client="ANDROID", proxies=pt_proxies) if pt_proxies else YouTube(chosen.watch_url, client="ANDROID")
+                stream = yt.streams.filter(only_audio=True).order_by("abr").desc().first()
+                if stream:
+                    dl_p = stream.download(output_path=str(output_dir), filename=f"sp_raw_{clean_id}.m4a")
+                    if Path(dl_p).exists() and Path(dl_p).stat().st_size > 10000:
+                        raw_audio_file = Path(dl_p)
+                        log(f"Spotify pytubefix Search SUCCESS: {raw_audio_file.name}")
+        except Exception as pfe:
+            log(f"Spotify pytubefix Search note: {pfe}")
+
+    if not raw_audio_file or not raw_audio_file.exists():
+        return None
+
+    # Convert to studio 192kbps MP3 with embedded ID3v2 tags (+ cover art if available)
+    report_progress(82, f"🎧 Mastering 192kbps MP3 & embedding Spotify metadata...")
+    try:
+        ff_cmd = ["ffmpeg", "-y", "-i", str(raw_audio_file)]
+        if thumb_path.exists() and thumb_path.stat().st_size > 500:
+            ff_cmd.extend(["-i", str(thumb_path), "-map", "0:a:0", "-map", "1:v:0", "-c:v", "mjpeg", "-disposition:v", "attached_pic"])
+        else:
+            ff_cmd.extend(["-vn"])
+        ff_cmd.extend([
+            "-c:a", "libmp3lame", "-ar", "44100", "-ac", "2", "-b:a", "192k",
+            "-id3v2_version", "3",
+            "-metadata", f"title={title}",
+            "-metadata", f"artist={artist or 'OneForAllHub'}",
+            "-metadata", "comment=Downloaded via @OneForAllDownloaderBot (@OneForAllHub)",
+            str(final_mp3),
+        ])
+        subprocess.run(ff_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=45)
+        if final_mp3.exists() and final_mp3.stat().st_size > 10000:
+            try: raw_audio_file.unlink()
+            except Exception: pass
+            log(f"Spotify Studio MP3 READY: {final_mp3.name} ({final_mp3.stat().st_size} bytes)")
+            return final_mp3
+    except Exception as fe:
+        log(f"Spotify FFmpeg mastering note: {fe}")
+
+    return raw_audio_file
+
 def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: Optional[str] = None) -> Optional[Path]:
     log(f"Attempting general yt-dlp download (format={fmt})...")
     report_progress(50, "Extracting media streams via 10Gbps engine...")
@@ -1716,9 +1937,10 @@ def main():
 
     raw_url = sys.argv[1].strip()
     fmt = sys.argv[2].strip() if len(sys.argv) > 2 else "video-720p"
-    is_audio = fmt == "audio-mp3"
-
     url = sanitize_url(raw_url)
+    if "spotify.com" in url or "spotify.link" in url or "spoti.fi" in url:
+        fmt = "audio-mp3"
+    is_audio = fmt == "audio-mp3"
     log(f"Final target URL: {url} | Format: {fmt}")
 
     output_dir = Path("output")
@@ -1763,6 +1985,10 @@ def main():
     # Step 4.7: Reddit Dedicated Engine (Cobalt reddit.js)
     if (not target_file or not target_file.exists()) and ("reddit.com" in url or "v.redd.it" in url):
         target_file = download_reddit(url, output_dir, fmt, proxy=warp_proxy)
+
+    # Step 4.8: Spotify Dedicated Engine (Zero-Auth Embed Metadata + Multi-Source Audio + ID3/Cover)
+    if (not target_file or not target_file.exists()) and ("spotify.com" in url or "spotify.link" in url or "spoti.fi" in url):
+        target_file = download_spotify(url, output_dir, fmt, proxy=warp_proxy)
 
     # Step 5: General yt-dlp Engine (SoundCloud, Vimeo, Twitch, Dailymotion, etc.)
     if not target_file or not target_file.exists() or target_file.stat().st_size == 0:
@@ -1931,6 +2157,19 @@ def main():
             log(f"Thumbnail encoding error: {e}")
 
     # Persist shared metadata for notify_telegram step
+    track_title = ""
+    track_artist = ""
+    try:
+        sp_meta_p = Path("/tmp/spotify_meta.json")
+        if sp_meta_p.exists():
+            sp_d = json.loads(sp_meta_p.read_text(encoding="utf-8"))
+            track_title = sp_d.get("title", "")
+            track_artist = sp_d.get("artist", "")
+            if not duration_sec and sp_d.get("duration"):
+                duration_sec = int(sp_d["duration"])
+    except Exception:
+        pass
+
     meta = {
         "filename": target_file.name,
         "filesize": target_file.stat().st_size,
@@ -1938,7 +2177,9 @@ def main():
         "width": width,
         "height": height,
         "actual_res": actual_res,
-        "thumb_b64": thumb_b64
+        "thumb_b64": thumb_b64,
+        "track_title": track_title,
+        "track_artist": track_artist
     }
     try:
         with open("/tmp/media_meta.json", "w", encoding="utf-8") as mf:

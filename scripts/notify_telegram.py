@@ -44,6 +44,8 @@ def notify_user():
 
     # Load shared metadata if available from download.py
     thumb_b64 = ""
+    track_title = ""
+    track_artist = ""
     try:
         meta_p = Path("/tmp/media_meta.json")
         if meta_p.exists():
@@ -58,6 +60,8 @@ def notify_user():
                 if not actual_res and mdata.get("actual_res"):
                     actual_res = mdata["actual_res"]
                 thumb_b64 = mdata.get("thumb_b64", "")
+                track_title = mdata.get("track_title", "")
+                track_artist = mdata.get("track_artist", "")
         if not thumb_b64 and Path("/tmp/thumb_b64.txt").exists():
             thumb_b64 = Path("/tmp/thumb_b64.txt").read_text(encoding="utf-8").strip()
     except Exception as me:
@@ -308,15 +312,26 @@ export default async function(args) {
     const totalSize = args.size_bytes || 0;
     const MAX_TELEGRAM_BOT_BYTES = 50 * 1024 * 1024;
 
-    const caption = [
-        '✅ <b>Your Media is Ready!</b>',
-        '',
-        '📁 <b>File:</b> <code>' + cleanFilename + '</code>',
-        '🎯 <b>Quality:</b> <b>' + (args.fmt_name || 'HD') + '</b>',
-        '📦 <b>Size:</b> <b>' + args.size_mb + ' MB</b>',
-        '',
-        '📡 @OneForAllHub'
-    ].join(NL);
+    const captionLines = args.track_title
+        ? [
+            '🎵 <b>' + args.track_title + '</b>',
+            ...(args.track_artist ? ['👤 <b>Artist:</b> ' + args.track_artist] : []),
+            '',
+            '🎯 <b>Quality:</b> <b>' + (args.fmt_name || 'Studio 192kbps MP3') + '</b>',
+            '📦 <b>Size:</b> <b>' + args.size_mb + ' MB</b>',
+            '',
+            '📡 @OneForAllHub'
+        ]
+        : [
+            '✅ <b>Your Media is Ready!</b>',
+            '',
+            '📁 <b>File:</b> <code>' + cleanFilename + '</code>',
+            '🎯 <b>Quality:</b> <b>' + (args.fmt_name || 'HD') + '</b>',
+            '📦 <b>Size:</b> <b>' + args.size_mb + ' MB</b>',
+            '',
+            '📡 @OneForAllHub'
+        ];
+    const caption = captionLines.join(NL);
 
     const keyboard = {
         inline_keyboard: [
@@ -381,8 +396,8 @@ export default async function(args) {
                     audio: new InputFile(allBytes, cleanFilename),
                     caption: caption,
                     parse_mode: 'HTML',
-                    performer: '@OneForAllHub',
-                    title: cleanFilename.replace(/_OneForAllHub\..*$/, ''),
+                    performer: args.track_artist || '@OneForAllHub',
+                    title: args.track_title || cleanFilename.replace(/_OneForAllHub\..*$/, ''),
                     reply_markup: keyboard
                 };
                 if (dur > 0) sendAudioParams.duration = dur;
@@ -487,7 +502,9 @@ export default async function(args) {
             "duration": duration,
             "width": width,
             "height": height,
-            "thumb_b64": thumb_b64
+            "thumb_b64": thumb_b64,
+            "track_title": track_title,
+            "track_artist": track_artist
         }
     }
 

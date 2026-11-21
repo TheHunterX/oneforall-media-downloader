@@ -1391,13 +1391,17 @@
         // YouTube & Multi-Platform Cloud Engine
         async function downloadViaCloudEngine(url) {
             const isFa = currentLang === 'fa';
-            const fmt = selectedFormat === 'audio' ? 'audio-mp3' : 'video-720p';
-            const targetExt = selectedFormat === 'audio' ? 'mp3' : 'mp4';
+            const isSpotify = url.includes('spotify.com') || url.includes('spotify.link') || url.includes('spoti.fi');
+            const fmt = (selectedFormat === 'audio' || isSpotify) ? 'audio-mp3' : 'video-720p';
+            const targetExt = (selectedFormat === 'audio' || isSpotify) ? 'mp3' : 'mp4';
 
             // Detect platform for tailored descriptions
             let platformKey = 'Universal';
             let platformLabel = 'Universal';
-            if (url.includes('youtube.com') || url.includes('youtu.be')) {
+            if (isSpotify) {
+                platformKey = 'Universal';
+                platformLabel = 'Spotify';
+            } else if (url.includes('youtube.com') || url.includes('youtu.be')) {
                 platformKey = 'YouTube';
                 platformLabel = 'YouTube';
             } else if (url.includes('instagram.com') || url.includes('ddinstagram.com')) {
@@ -1438,6 +1442,8 @@
             if (fbMatch) cleanId = `fb_${fbMatch[1]}`;
             const rdMatch = url.match(/comments\/([a-zA-Z0-9]+)/);
             if (rdMatch) cleanId = `rd_${rdMatch[1]}`;
+            const spMatch = url.match(/spotify\.com\/(?:intl-[a-z-]+\/)?(?:track|album|playlist|episode)\/([a-zA-Z0-9]+)/i);
+            if (spMatch) cleanId = `sp_${spMatch[1]}`;
 
             if (!cleanId) {
                 const parts = url.split('/').filter(Boolean);

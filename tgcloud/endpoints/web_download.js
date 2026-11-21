@@ -4,7 +4,7 @@ import { dispatchCloudWorkflow } from '../lib/vault.js';
 
 export default async function (input, ctx) {
   const url = (input && typeof input.url === 'string') ? input.url.trim() : '';
-  const format = (input && typeof input.format === 'string') ? input.format.trim() : 'video-720p';
+  let format = (input && typeof input.format === 'string') ? input.format.trim() : 'video-720p';
 
   if (!url || !url.startsWith('http')) {
     throw new EndpointError('Invalid media URL provided.', { code: 'INVALID_URL' });
@@ -20,6 +20,10 @@ export default async function (input, ctx) {
   else if (low.includes('pinterest.') || low.includes('pin.it')) platform = 'Pinterest';
   else if (low.includes('facebook.com') || low.includes('fb.watch')) platform = 'Facebook';
   else if (low.includes('reddit.com') || low.includes('v.redd.it')) platform = 'Reddit';
+  else if (low.includes('spotify.com') || low.includes('spotify.link') || low.includes('spoti.fi')) {
+    platform = 'Spotify';
+    format = 'audio-mp3';
+  }
 
   try {
     await db.insert(downloads).values({

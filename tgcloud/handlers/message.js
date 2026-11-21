@@ -99,6 +99,11 @@ function sanitizeUrl(rawUrl) {
     return trimmed.split('?')[0];
   }
 
+  // 6. Spotify: Strip /intl-xx/ locale segment and ?si= query trackers
+  if (trimmed.includes('spotify.com')) {
+    return trimmed.split('?')[0].split('#')[0].replace(/open\.spotify\.com\/intl-[a-z-]+\//i, 'open.spotify.com/');
+  }
+
   return trimmed;
 }
 
@@ -925,6 +930,112 @@ export default async function (event) {
         await dispatchCloudWorkflow({
           url: cleanUrl,
           format: 'video-720p',
+          chatId: String(chatId),
+          messageId: waitMsg?.message_id ? String(waitMsg.message_id) : '',
+          sendToTelegram: 'true'
+        });
+      } catch (_) {}
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // 8.6. Spotify Platform: Zero-Auth Track Metadata + Cover Art + Studio MP3
+    // -------------------------------------------------------------
+    if (cleanUrl.includes('spotify.com') || cleanUrl.includes('spotify.link') || cleanUrl.includes('spoti.fi')) {
+      let spUrl = cleanUrl;
+      if (spUrl.includes('spotify.link') || spUrl.includes('spoti.fi')) {
+        try {
+          const rShort = await fetch(spUrl, {
+            redirect: 'follow',
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+          });
+          if (rShort && rShort.url && rShort.url.includes('spotify.com')) {
+            spUrl = sanitizeUrl(rShort.url);
+          }
+        } catch (_) {}
+      }
+
+      let spTitle = isFa ? 'در حال دریافت موزیک از اسپاتیفای...' : 'Downloading Spotify Audio MP3...';
+      let spArtist = '';
+      let spCover = '';
+
+      const spMatch = spUrl.match(/spotify\.com\/(?:intl-[a-z-]+\/)?(track|album|playlist|episode)\/([a-zA-Z0-9]+)/i);
+      if (spMatch) {
+        const spKind = spMatch[1].toLowerCase();
+        const spId = spMatch[2];
+        try {
+          const embRes = await fetch(`https://open.spotify.com/embed/${spKind}/${spId}`, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+          });
+          if (embRes.ok) {
+            const html = await embRes.text();
+            const ndM = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+            if (ndM && ndM[1]) {
+              const nd = JSON.parse(ndM[1]);
+              const ent = nd?.props?.pageProps?.state?.data?.entity;
+              if (ent) {
+                spCover = ent?.visualIdentity?.image?.[0]?.url || '';
+                if ((spKind === 'album' || spKind === 'playlist') && Array.isArray(ent.trackList) && ent.trackList.length > 0) {
+                  spTitle = ent.trackList[0].title || ent.name || spTitle;
+                  spArtist = ent.trackList[0].subtitle || '';
+                } else {
+                  spTitle = ent.name || ent.title || spTitle;
+                  const arts = (ent.artists || []).map(a => a.name).filter(Boolean);
+                  spArtist = arts.join(', ') || ent.subtitle || '';
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      const statusCaption =
+        `🎵 <b>${escapeHtml(spTitle)}</b>` +
+        (spArtist ? `\n👤 <b>${escapeHtml(spArtist)}</b>` : '') + `\n\n` +
+        `<code>[${renderProgressBar(25)}]</code> <b>25%</b>\n` +
+        `⚡ <b>Status:</b> ${isFa ? 'جستجو و استخراج فایل صوتی استودیویی 192kbps MP3...' : 'Matching studio 192kbps MP3 & embedding album art...'}\n` +
+        `⏱ <b>Estimated:</b> ~10s remaining\n\n` +
+        `📡 @OneForAllHub`;
+
+      let waitMsg = null;
+      try {
+        if (spCover) {
+          waitMsg = await api.sendPhoto({
+            chat_id: chatId,
+            photo: spCover,
+            caption: statusCaption,
+            parse_mode: 'HTML'
+          });
+        } else {
+          waitMsg = await api.sendMessage({
+            chat_id: chatId,
+            parse_mode: 'HTML',
+            text: statusCaption
+          });
+        }
+      } catch (_) {
+        try {
+          waitMsg = await api.sendMessage({
+            chat_id: chatId,
+            parse_mode: 'HTML',
+            text: statusCaption
+          });
+        } catch (_) {}
+      }
+
+      try {
+        await db.insert(downloads).values({
+          chatId: Number(chatId),
+          url: spUrl,
+          platform: 'Spotify',
+          createdAt: new Date().toISOString()
+        }).run();
+      } catch (_) {}
+
+      try {
+        await dispatchCloudWorkflow({
+          url: spUrl,
+          format: 'audio-mp3',
           chatId: String(chatId),
           messageId: waitMsg?.message_id ? String(waitMsg.message_id) : '',
           sendToTelegram: 'true'
