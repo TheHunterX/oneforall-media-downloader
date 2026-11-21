@@ -1305,6 +1305,7 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
     plans = []
     if proxy:
         plans.append(("WARP Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True))
+        plans.append(("WARP Android VR client", False, ["--extractor-args", "youtube:player_client=android_vr"], True))
         if has_cookies:
             plans.append(("WARP Authenticated (Cookies + Default/TV)", True, ["--extractor-args", "youtube:player_client=default,-android,-ios"], True))
             plans.append(("WARP Authenticated (Cookies + Web/MWeb)", True, ["--extractor-args", "youtube:player_client=web,mweb,tv"], True))
@@ -1314,6 +1315,7 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
 
     # Native direct connection fallbacks
     plans.append(("Direct Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], False))
+    plans.append(("Direct Android VR client", False, ["--extractor-args", "youtube:player_client=android_vr"], False))
     if has_cookies:
         plans.append(("Direct Authenticated (Cookies + Default/TV)", True, ["--extractor-args", "youtube:player_client=default,-android,-ios"], False))
     plans.append(("Direct pure Android client", False, ["--extractor-args", "youtube:player_client=android"], False))
@@ -1598,6 +1600,34 @@ def download_reddit(url: str, output_dir: Path, fmt: str, proxy: Optional[str] =
             return final_file
     except Exception as re_err:
         log(f"Cobalt Reddit note: {re_err}")
+
+    # Tier 2: vxreddit.com mirror (bypasses Reddit 403 datacenter IP blocks cleanly)
+    try:
+        import html as _html
+        vx_url = f"https://vxreddit.com/comments/{post_id}"
+        log(f"Trying Reddit Tier 2 (vxreddit mirror): {vx_url}")
+        req = urllib.request.Request(vx_url, headers={"User-Agent": "TelegramBot (like TwitterBot)"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            page = r.read().decode("utf-8", errors="replace")
+        vids = re.findall(r'property="og:video(?::secure_url)?"\s+content="([^"]+)"', page)
+        if vids:
+            vid_url = _html.unescape(vids[0])
+            final_file = output_dir / f"{clean_id}_OneForAllHub.{'mp3' if is_audio else 'mp4'}"
+            tmp_vid = output_dir / f"temp_vx_{clean_id}.mp4"
+            if download_stream_url(vid_url, tmp_vid, proxy=None) or (proxy and download_stream_url(vid_url, tmp_vid, proxy=proxy)):
+                if is_audio:
+                    subprocess.run([
+                        "ffmpeg", "-y", "-i", str(tmp_vid), "-vn", "-ar", "44100", "-ac", "2", "-b:a", "192k", str(final_file)
+                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    try: tmp_vid.unlink()
+                    except Exception: pass
+                else:
+                    tmp_vid.rename(final_file)
+                if final_file.exists() and final_file.stat().st_size > 1000:
+                    log(f"Reddit Tier 2 (vxreddit) SUCCESS: {final_file.name} ({final_file.stat().st_size} bytes)")
+                    return final_file
+    except Exception as vx_err:
+        log(f"Reddit Tier 2 (vxreddit) note: {vx_err}")
     return None
 
 # =====================================================================
