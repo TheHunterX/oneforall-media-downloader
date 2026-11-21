@@ -41,19 +41,19 @@ export async function setUserLang(userId, lang) {
 export const texts = {
   en: {
     startTitle: "👋 <b>Welcome to OneForAllHub Media Downloader!</b>",
-    startSubtitle: "High-speed serverless downloader for YouTube, Instagram, TikTok, and Twitter / X with original HD quality.",
-    guideHeading: "💡 <b>3 Ways to Use This Bot:</b>",
+    startSubtitle: "All-in-one high-speed serverless downloader for HD videos, Reels, photos, and studio-quality 192kbps MP3 audio — 100% free & unlimited.",
+    guideHeading: "💡 <b>3 Ways to Use OneForAllHub:</b>",
     
-    way1Title: "1️⃣ <b>Direct in Chat (No App Needed):</b>",
-    way1Desc: "• Simply send any media link (YouTube, Instagram, TikTok, Twitter/X, Pinterest) directly in this chat.\n• The bot will immediately process and deliver your HD video, 4K original artwork, or MP3 audio file.",
+    way1Title: "1️⃣ <b>Direct in Chat (Fastest):</b>",
+    way1Desc: "• Just paste any media link right here in this chat.\n• The bot automatically detects the platform and sends your HD video, original artwork, or tagged MP3 audio.",
     
     way2Title: "2️⃣ <b>Telegram Mini App:</b>",
-    way2Desc: "• Tap the <b>🚀 Launch Mini App</b> button below.\n• Enjoy an interactive app experience inside Telegram with video player, quality selector, and 1-click downloads.",
+    way2Desc: "• Tap <b>🚀 Launch Mini App</b> below for a sleek in-app interface with preview, quality selector, and 1-tap downloads.",
     
     way3Title: "3️⃣ <b>Web Browser:</b>",
-    way3Desc: "• Tap the <b>🌐 Web Browser</b> button to open the web version on desktop or mobile.\n• Fast 10Gbps downloads without needing Telegram.",
+    way3Desc: "• Tap <b>🌐 Web Browser</b> to use the desktop/mobile web version at full 10Gbps speed without needing Telegram.",
     
-    platforms: "📥 <b>Supported:</b> YouTube (1080p/720p/MP3) • Instagram • TikTok (No Watermark) • Twitter/X • Pinterest",
+    platforms: "📥 <b>Supported Platforms (9 Verified):</b>\n• <b>YouTube</b> (1080p / 720p / 480p / 360p / MP3)\n• <b>Instagram</b> (Reels, Posts, Photos & Stories)\n• <b>Spotify</b> (192kbps MP3 + Cover Art & ID3)\n• <b>TikTok</b> (Full HD, No Watermark)\n• <b>Twitter / X</b> • <b>Pinterest</b> • <b>SoundCloud</b>\n• <b>Reddit</b> (Video + Audio) • <b>Facebook</b> (Public)",
     channel: "📢 <b>Official Channel:</b> @OneForAllHub",
     
     btnMiniApp: "🚀 Launch Mini App",
@@ -64,10 +64,10 @@ export const texts = {
     subRequired: "🔒 <b>Channel Membership Required</b>\n\nTo use <b>OneForAllHub Downloader</b> for free with unlimited bandwidth, please join our official channel:\n\n👉 <b>@OneForAllHub</b>\n\nAfter joining, click the <b>Verify & Continue</b> button below to unlock instant downloads!",
     subBtnJoin: "📢 Join @OneForAllHub",
     subBtnVerify: "✅ Verify & Continue",
-    subVerified: "✨ <b>Subscription Verified!</b>\n\nYou now have full, high-speed access to <b>OneForAllHub Media Downloader</b>.\nPaste any video or audio link to get started!",
+    subVerified: "✨ <b>Subscription Verified!</b>\n\nYou now have full, high-speed access to <b>OneForAllHub Media Downloader</b>.\nPaste any video, photo, or music link to get started!",
     subNotJoined: "⚠️ You haven't joined @OneForAllHub yet! Please join first.",
     
-    invalidUrl: "⚠️ <b>Invalid Link</b>\n\nPlease send a valid media link from YouTube, TikTok, Twitter/X, Instagram, or Pinterest.\n<i>Example:</i> <code>https://x.com/NASA/status/1732824684683784516</code>",
+    invalidUrl: "⚠️ <b>Invalid Link</b>\n\nPlease send a valid link from YouTube, Instagram, Spotify, TikTok, Twitter/X, Pinterest, SoundCloud, Reddit, or Facebook.\n<i>Example:</i> <code>https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b</code>",
     invalidYtUrl: "⚠️ <b>Invalid YouTube Link</b>\n\nCould not extract a valid YouTube video ID. Please check the URL and try again.",
     
     ytCaption: "🎬 <b>Select a quality to download directly in chat:</b>",
@@ -83,19 +83,19 @@ export const texts = {
   
   fa: {
     startTitle: "👋 <b>به ربات دانلودر OneForAllHub خوش آمدید!</b>",
-    startSubtitle: "سریع‌ترین ربات دانلود مدیا از یوتیوب، اینستاگرام، تیک‌تاک و توییتر / X با کیفیت اصلی و بدون قطعی.",
+    startSubtitle: "دانلودر همه‌کاره و پرسرعت بدون سرور برای دریافت ویدیوهای HD، ریلز، تصاویر با کیفیت اصلی و موزیک MP3 با کاور و تگ — کاملاً رایگان و نامحدود.",
     guideHeading: "💡 <b>راهنمای ۳ روش استفاده:</b>",
     
-    way1Title: "1️⃣ <b>بدون برنامه (مستقیم در چت ربات):</b>",
-    way1Desc: "• کافیست هر لینکی (یوتیوب، اینستاگرام، تیک‌تاک، توییتر، پینترست) را همینجا در چت بفرستید.\n• ربات بلافاصله فایل ویدیویی، تصویر با کیفیت اصلی ۴K یا صوت MP3 را برایتان ارسال می‌کند.",
+    way1Title: "1️⃣ <b>مستقیم در چت ربات (سریع‌ترین روش):</b>",
+    way1Desc: "• کافیست لینک هر ویدیو، پست یا موزیک را همینجا در چت بفرستید.\n• ربات به‌صورت خودکار پلتفرم را تشخیص داده و فایل HD یا MP3 را برایتان ارسال می‌کند.",
     
-    way2Title: "2️⃣ <b>مینی‌اپ تلگرام (Mini App داخل تلگرام):</b>",
-    way2Desc: "• روی دکمه <b>🚀 اجرای مینی‌اپ</b> کلیک کنید تا محیط اپلیکیشن داخل تلگرام باز شود.\n• امکان تماشای آنلاین، پیش‌نمایش و انتخاب کیفیت ویدیو یا MP3 را با ۱ کلیک خواهید داشت.",
+    way2Title: "2️⃣ <b>مینی‌اپ تلگرام (Mini App):</b>",
+    way2Desc: "• روی دکمه <b>🚀 اجرای مینی‌اپ</b> کلیک کنید تا اپلیکیشن اختصاصی داخل تلگرام با پیش‌نمایش و انتخاب کیفیت باز شود.",
     
     way3Title: "3️⃣ <b>نسخه وب‌سایت (مرورگر):</b>",
-    way3Desc: "• روی دکمه <b>🌐 وب‌سایت</b> کلیک کنید تا در کامپیوتر یا مرورگر از سایت پرسرعت استفاده کنید.\n• دانلود مستقیم فایل‌ها با نهایت پهنای باند ۱۰ گیگابیت بدون نیاز به تلگرام.",
+    way3Desc: "• روی دکمه <b>🌐 وب‌سایت</b> کلیک کنید تا در کامپیوتر یا موبایل بدون نیاز به تلگرام با سرعت ۱۰ گیگابیت دانلود کنید.",
     
-    platforms: "📥 <b>پلتفرم‌ها:</b> YouTube (1080p/720p/MP3) • Instagram • TikTok • Twitter/X • Pinterest",
+    platforms: "📥 <b>پلتفرم‌های پشتیبانی‌شده (۹ پلتفرم تست‌شده):</b>\n• <b>YouTube</b> (1080p / 720p / 480p / 360p / MP3)\n• <b>Instagram</b> (ریلز، پست، عکس و استوری)\n• <b>Spotify</b> (موزیک 192kbps MP3 با کاور و تگ)\n• <b>TikTok</b> (کیفیت اصلی بدون واترمارک)\n• <b>Twitter / X</b> • <b>Pinterest</b> • <b>SoundCloud</b>\n• <b>Reddit</b> (ویدیو با صدا) • <b>Facebook</b> (ویدیوهای عمومی)",
     channel: "📢 <b>کانال رسمی:</b> @OneForAllHub",
     
     btnMiniApp: "🚀 اجرای مینی‌اپ",
@@ -106,10 +106,10 @@ export const texts = {
     subRequired: "🔒 <b>عضویت در کانال الزامی است</b>\n\nبرای استفاده رایگان و نامحدود از ربات، لطفاً ابتدا در کانال رسمی ما عضو شوید:\n\n👉 <b>@OneForAllHub</b>\n\nپس از عضویت، روی دکمه «تایید عضویت» کلیک کنید تا دانلودها فعال شوند!",
     subBtnJoin: "📢 عضویت در @OneForAllHub",
     subBtnVerify: "✅ تایید عضویت",
-    subVerified: "✨ <b>عضویت شما با موفقیت تایید شد!</b>\n\nشما اکنون دسترسی کامل و نامحدود به ربات دارید.\nکافیست لینک ویدیوی دلخواه خود را بفرستید!",
+    subVerified: "✨ <b>عضویت شما با موفقیت تایید شد!</b>\n\nشما اکنون دسترسی کامل و نامحدود به ربات دارید.\nکافیست لینک ویدیو، عکس یا موزیک دلخواه خود را بفرستید!",
     subNotJoined: "⚠️ شما هنوز در کانال @OneForAllHub عضو نشده‌اید! لطفاً ابتدا عضو شوید.",
     
-    invalidUrl: "⚠️ <b>لینک نامعتبر</b>\n\nلطفاً یک آدرس معتبر از یوتیوب، تیک‌تاک، توییتر، اینستاگرام یا پینترست ارسال کنید.\n<i>مثال:</i> <code>https://x.com/NASA/status/1732824684683784516</code>",
+    invalidUrl: "⚠️ <b>لینک نامعتبر</b>\n\nلطفاً یک لینک معتبر از یوتیوب، اینستاگرام، اسپاتیفای، تیک‌تاک، توییتر/X، پینترست، ساندکلود، ردیت یا فیسبوک ارسال کنید.\n<i>مثال:</i> <code>https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b</code>",
     invalidYtUrl: "⚠️ <b>لینک نامعتبر یوتیوب</b>\n\nشناسه ویدیو یافت نشد. لطفاً لینک کامل ویدیو را ارسال نمایید.",
     
     ytCaption: "🎬 <b>کیفیت مورد نظر خود را برای دانلود انتخاب کنید:</b>",
