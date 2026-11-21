@@ -1305,6 +1305,11 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
     plans = []
     if proxy:
         plans.append(("WARP Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True))
+        if not is_audio:
+            hls_cap = "1080" if fmt == "video-1080p" else ("720" if fmt == "video-720p" else ("480" if fmt == "video-480p" else ("360" if fmt == "video-360p" else "1080")))
+            hls_fmt = f"bv*[height<={hls_cap}][protocol^=m3u8]+ba[protocol^=m3u8]/b[height<={hls_cap}][protocol^=m3u8]/bv*[height<={hls_cap}]+ba/b[height<={hls_cap}]/best"
+            plans.append(("WARP Web Safari HLS (PO-token bypass)", False, ["-f", hls_fmt, "--merge-output-format", "mp4", "--extractor-args", "youtube:player_client=web_safari"], True))
+            plans.append(("WARP iOS HLS client", False, ["-f", hls_fmt, "--merge-output-format", "mp4", "--extractor-args", "youtube:player_client=ios"], True))
         plans.append(("WARP Android VR client", False, ["--extractor-args", "youtube:player_client=android_vr"], True))
         if has_cookies:
             plans.append(("WARP Authenticated (Cookies + Default/TV)", True, ["--extractor-args", "youtube:player_client=default,-android,-ios"], True))
