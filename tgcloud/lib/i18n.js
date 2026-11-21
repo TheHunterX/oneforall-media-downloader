@@ -53,7 +53,7 @@ export const texts = {
     way3Title: "3️⃣ <b>Web Browser:</b>",
     way3Desc: "• Tap <b>🌐 Web Browser</b> to use the desktop/mobile web version at full 10Gbps speed without needing Telegram.",
     
-    platforms: "📥 <b>Supported Platforms (9 Verified):</b>\n• <b>YouTube</b> (1080p / 720p / 480p / 360p / MP3)\n• <b>Instagram</b> (Reels, Posts, Photos & Stories)\n• <b>Spotify</b> (192kbps MP3 + Cover Art & ID3)\n• <b>TikTok</b> (Full HD, No Watermark)\n• <b>Twitter / X</b> • <b>Pinterest</b> • <b>SoundCloud</b>\n• <b>Reddit</b> (Video + Audio) • <b>Facebook</b> (Public)",
+    platforms: "📥 <b>Supported Platforms:</b>\n• ▶️ <b>YouTube</b> — 1080p / 720p / 480p / 360p &amp; MP3\n• 📸 <b>Instagram</b> — Reels, Posts, Photos &amp; Stories\n• 🎵 <b>Spotify</b> — 192kbps MP3 + Cover Art &amp; ID3 Tags\n• 🎬 <b>TikTok</b> — Full HD (No Watermark) &amp; Audio\n• 🐦 <b>Twitter / X</b> — Original HD Videos &amp; GIFs\n• 📌 <b>Pinterest</b> — Original 4K Images &amp; Videos\n• ☁️ <b>SoundCloud</b> — High-Quality MP3 Audio\n• 👽 <b>Reddit</b> — HD Videos with Audio\n• 📘 <b>Facebook</b> — Public Videos &amp; Reels\n• 🌐 <b>+ 1,000+ Other Sites</b> — Vimeo, Twitch, Dailymotion, Bluesky, Threads, Tumblr &amp; more!\n",
     channel: "📢 <b>Official Channel:</b> @OneForAllHub",
     
     btnMiniApp: "🚀 Launch Mini App",
@@ -95,7 +95,7 @@ export const texts = {
     way3Title: "3️⃣ <b>نسخه وب‌سایت (مرورگر):</b>",
     way3Desc: "• روی دکمه <b>🌐 وب‌سایت</b> کلیک کنید تا در کامپیوتر یا موبایل بدون نیاز به تلگرام با سرعت ۱۰ گیگابیت دانلود کنید.",
     
-    platforms: "📥 <b>پلتفرم‌های پشتیبانی‌شده (۹ پلتفرم تست‌شده):</b>\n• <b>YouTube</b> (1080p / 720p / 480p / 360p / MP3)\n• <b>Instagram</b> (ریلز، پست، عکس و استوری)\n• <b>Spotify</b> (موزیک 192kbps MP3 با کاور و تگ)\n• <b>TikTok</b> (کیفیت اصلی بدون واترمارک)\n• <b>Twitter / X</b> • <b>Pinterest</b> • <b>SoundCloud</b>\n• <b>Reddit</b> (ویدیو با صدا) • <b>Facebook</b> (ویدیوهای عمومی)",
+    platforms: "📥 <b>پلتفرم‌های پشتیبانی‌شده:</b>\n• ▶️ <b>YouTube</b> — ویدیو 1080p / 720p / 480p / 360p و MP3\n• 📸 <b>Instagram</b> — ریلز، پست، عکس و استوری\n• 🎵 <b>Spotify</b> — موزیک 192kbps MP3 با کاور و تگ ID3\n• 🎬 <b>TikTok</b> — کیفیت اصلی (بدون واترمارک) و صوت\n• 🐦 <b>Twitter / X</b> — ویدیوها و گیف‌های HD اصلی\n• 📌 <b>Pinterest</b> — تصاویر ۴K و ویدیوهای اصلی\n• ☁️ <b>SoundCloud</b> — دانلود موزیک MP3 با کیفیت بالا\n• 👽 <b>Reddit</b> — ویدیوهای HD همراه با صدا\n• 📘 <b>Facebook</b> — ویدیوها و ریلزهای عمومی\n• 🌐 <b>و بیش از ۱۰۰۰ سایت دیگر</b> — Vimeo، Twitch، Dailymotion، Bluesky، Threads، Tumblr و...\n",
     channel: "📢 <b>کانال رسمی:</b> @OneForAllHub",
     
     btnMiniApp: "🚀 اجرای مینی‌اپ",
