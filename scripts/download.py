@@ -1262,8 +1262,93 @@ def download_instagram(url: str, output_dir: Path, fmt: str, proxy: Optional[str
     return None
 
 # =====================================================================
-# 4. YouTube Engine (Authenticated WARP + VisionOS/Android + pytubefix Proxy Fallback)
 # =====================================================================
+# 4. YouTube Engine (BGUtil PO-Token + pytubefix WEB + SaveTube CDN)
+# =====================================================================
+def download_youtube_savetube(url: str, output_dir: Path, fmt: str, clean_id: str) -> Optional[Path]:
+    """External SaveTube CDN API fallback (AES-128-CBC decrypted via system openssl)."""
+    log("Invoking SaveTube CDN external YouTube fallback engine...")
+    report_progress(68, "Downloading via high-speed YouTube CDN mirror...")
+    st_headers = {
+        "Content-Type": "application/json",
+        "Origin": "https://ytsave.savetube.me",
+        "Referer": "https://ytsave.savetube.me/",
+        "User-Agent": GENERIC_CHROME_UA
+    }
+    try:
+        cdn_req = urllib.request.Request("https://media.savetube.me/api/random-cdn", headers={"User-Agent": GENERIC_CHROME_UA})
+        with urllib.request.urlopen(cdn_req, timeout=10) as r:
+            cdn_host = json.loads(r.read().decode("utf-8"))["cdn"]
+
+        info_req = urllib.request.Request(
+            f"https://{cdn_host}/v2/info",
+            data=json.dumps({"url": url}).encode("utf-8"),
+            headers=st_headers,
+            method="POST"
+        )
+        with urllib.request.urlopen(info_req, timeout=15) as r:
+            info = json.loads(r.read().decode("utf-8"))
+        if not info.get("status") or not info.get("data"):
+            log(f"SaveTube v2/info returned status={info.get('status')}")
+            return None
+
+        enc_b64 = re.sub(r"\s+", "", info["data"])
+        raw_bytes = base64.b64decode(enc_b64)
+        iv_hex = raw_bytes[:16].hex()
+        ciphertext = raw_bytes[16:]
+        proc = subprocess.run(
+            ["openssl", "enc", "-d", "-aes-128-cbc", "-K", "C5D58EF67A7584E4A29F6C35BBC4EB12", "-iv", iv_hex],
+            input=ciphertext,
+            capture_output=True,
+            timeout=10,
+            check=True
+        )
+        media_data = json.loads(proc.stdout.decode("utf-8"))
+
+        is_audio = fmt == "audio-mp3"
+        if is_audio:
+            dl_type = "audio"
+            ext = "mp3"
+            aud_quals = [str(a.get("quality")) for a in (media_data.get("audio_formats") or []) if a.get("quality") is not None]
+            qual = "192" if "192" in aud_quals else ("128" if "128" in aud_quals else (aud_quals[0] if aud_quals else "128"))
+        else:
+            dl_type = "video"
+            ext = "mp4"
+            target_map = {"video-1080p": 1080, "video-720p": 720, "video-480p": 480, "video-360p": 360, "video-best": 1080}
+            target_h = target_map.get(fmt, 720)
+            vid_quals = sorted(
+                {int(str(v.get("quality"))) for v in (media_data.get("video_formats") or []) if str(v.get("quality", "")).isdigit()},
+                reverse=True
+            )
+            eligible = [q for q in vid_quals if q <= target_h]
+            qual = str(eligible[0]) if eligible else (str(vid_quals[-1]) if vid_quals else "720")
+
+        dl_req = urllib.request.Request(
+            f"https://{cdn_host}/download",
+            data=json.dumps({
+                "id": media_data["id"],
+                "key": media_data["key"],
+                "downloadType": dl_type,
+                "quality": str(qual)
+            }).encode("utf-8"),
+            headers=st_headers,
+            method="POST"
+        )
+        with urllib.request.urlopen(dl_req, timeout=20) as r:
+            dl_json = json.loads(r.read().decode("utf-8"))
+        dl_url = (dl_json.get("data") or {}).get("downloadUrl")
+        if not dl_url:
+            log("SaveTube /download returned empty downloadUrl")
+            return None
+
+        final_file = output_dir / f"{clean_id}_OneForAllHub.{ext}"
+        if download_stream_url(dl_url, final_file, proxy=None) and final_file.exists() and final_file.stat().st_size > 1000:
+            log(f"SUCCESS with SaveTube CDN fallback: {final_file.name} ({final_file.stat().st_size} bytes)")
+            return final_file
+    except Exception as ste:
+        log(f"SaveTube fallback note: {ste}")
+    return None
+
 def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] = None) -> Optional[Path]:
     """
     Rock-solid multi-strategy YouTube engine supporting 1080p, 720p, 480p, 360p and 192k MP3.
@@ -1302,30 +1387,21 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
     has_cookies = _find_master_cookies_file() is not None
 
     # Tuple format: (plan_name, use_cookies, extra_args, use_proxy)
+    bgutil_arg = "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416"
     plans = []
     if proxy:
-        plans.append(("WARP Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True))
-        if not is_audio:
-            hls_cap = "1080" if fmt == "video-1080p" else ("720" if fmt == "video-720p" else ("480" if fmt == "video-480p" else ("360" if fmt == "video-360p" else "1080")))
-            hls_fmt = f"bv*[height<={hls_cap}][protocol^=m3u8]+ba[protocol^=m3u8]/b[height<={hls_cap}][protocol^=m3u8]/bv*[height<={hls_cap}]+ba/b[height<={hls_cap}]/best"
-            plans.append(("WARP Web Safari HLS (PO-token bypass)", False, ["-f", hls_fmt, "--merge-output-format", "mp4", "--extractor-args", "youtube:player_client=web_safari"], True))
-            plans.append(("WARP iOS HLS client", False, ["-f", hls_fmt, "--merge-output-format", "mp4", "--extractor-args", "youtube:player_client=ios"], True))
-        plans.append(("WARP Android VR client", False, ["--extractor-args", "youtube:player_client=android_vr"], True))
+        plans.append(("WARP + BGUtil PO-Token (mweb/web)", False, ["--extractor-args", "youtube:player_client=mweb,web,web_embedded", "--extractor-args", bgutil_arg], True))
+        plans.append(("WARP + BGUtil PO-Token (tv_embedded/safari)", False, ["--extractor-args", "youtube:player_client=tv_embedded,web_safari", "--extractor-args", bgutil_arg], True))
         if has_cookies:
-            plans.append(("WARP Authenticated (Cookies + Default/TV)", True, ["--extractor-args", "youtube:player_client=default,-android,-ios"], True))
-            plans.append(("WARP Authenticated (Cookies + Web/MWeb)", True, ["--extractor-args", "youtube:player_client=web,mweb,tv"], True))
-        plans.append(("WARP pure Android client", False, ["--extractor-args", "youtube:player_client=android"], True))
-        if not is_audio:
-            plans.append(("WARP progressive MP4 format 18", False, ["-f", "18/best[ext=mp4]/best", "--extractor-args", "youtube:player_client=android"], True))
+            plans.append(("WARP + BGUtil + Cookies", True, ["--extractor-args", "youtube:player_client=web,mweb", "--extractor-args", bgutil_arg], True))
+        plans.append(("WARP Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True))
 
     # Native direct connection fallbacks
-    plans.append(("Direct Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], False))
-    plans.append(("Direct Android VR client", False, ["--extractor-args", "youtube:player_client=android_vr"], False))
+    plans.append(("Direct + BGUtil PO-Token (mweb/web)", False, ["--extractor-args", "youtube:player_client=mweb,web,web_embedded", "--extractor-args", bgutil_arg], False))
+    plans.append(("Direct + BGUtil PO-Token (tv_embedded/safari)", False, ["--extractor-args", "youtube:player_client=tv_embedded,web_safari", "--extractor-args", bgutil_arg], False))
     if has_cookies:
-        plans.append(("Direct Authenticated (Cookies + Default/TV)", True, ["--extractor-args", "youtube:player_client=default,-android,-ios"], False))
-    plans.append(("Direct pure Android client", False, ["--extractor-args", "youtube:player_client=android"], False))
-    if not is_audio:
-        plans.append(("Direct progressive MP4 format 18", False, ["-f", "18/best[ext=mp4]/best", "--extractor-args", "youtube:player_client=android"], False))
+        plans.append(("Direct + BGUtil + Cookies", True, ["--extractor-args", "youtube:player_client=web,mweb", "--extractor-args", bgutil_arg], False))
+    plans.append(("Direct Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], False))
 
     for plan_name, use_cookies, extra_args, use_proxy in plans:
         log(f"YouTube Engine trying: {plan_name} (proxy={use_proxy}, cookies={use_cookies})...")
@@ -1370,13 +1446,19 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
         except Exception as pe:
             log(f"Plan {plan_name} note: {pe}")
 
-    # Fallback: Native pytubefix engine (WARP proxy aware + ANDROID/IOS client fallback)
-    log("Invoking native pytubefix fallback engine (WARP + Android/iOS Client)...")
+    # Fallback: Native pytubefix v11 engine (WEB/MWEB auto-PO-token + adaptive HD muxing)
+    log("Invoking native pytubefix fallback engine (WEB/MWEB Auto-PO-Token + Adaptive Mux)...")
     report_progress(60, "Downloading via high-speed native pytubefix engine...")
     try:
         from pytubefix import YouTube
         pt_proxies = {"http": proxy, "https": proxy} if proxy else None
-        for pt_client, pt_p in ([("ANDROID", pt_proxies), ("IOS", pt_proxies), ("ANDROID", None)] if proxy else [("ANDROID", None), ("IOS", None)]):
+        pt_clients = (
+            [("WEB", pt_proxies), ("MWEB", pt_proxies), ("WEB", None), ("MWEB", None), ("ANDROID", pt_proxies), ("IOS", pt_proxies)]
+            if proxy else
+            [("WEB", None), ("MWEB", None), ("ANDROID", None), ("IOS", None)]
+        )
+        max_h = 1080 if fmt in ("video-1080p", "video-best") else (720 if fmt == "video-720p" else (480 if fmt == "video-480p" else 360))
+        for pt_client, pt_p in pt_clients:
             try:
                 yt = YouTube(url, client=pt_client, proxies=pt_p) if pt_p else YouTube(url, client=pt_client)
                 if is_audio:
@@ -1395,6 +1477,29 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
                             log(f"SUCCESS with pytubefix ({pt_client}, Audio MP3): {final_output_file.name}")
                             return final_output_file
                 else:
+                    adap_candidates = [
+                        s for s in yt.streams.filter(adaptive=True, only_video=True, file_extension='mp4').order_by('resolution').desc()
+                        if s.resolution and s.resolution.rstrip('p').isdigit() and int(s.resolution.rstrip('p')) <= max_h
+                    ]
+                    aud_s = yt.streams.filter(only_audio=True).order_by('abr').desc().first()
+                    if adap_candidates and aud_s:
+                        v_tmp = output_dir / f"pt_v_{clean_id}.mp4"
+                        a_tmp = output_dir / f"pt_a_{clean_id}.m4a"
+                        adap_candidates[0].download(output_path=str(output_dir), filename=v_tmp.name)
+                        aud_s.download(output_path=str(output_dir), filename=a_tmp.name)
+                        subprocess.run([
+                            "ffmpeg", "-y", "-i", str(v_tmp), "-i", str(a_tmp),
+                            "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart",
+                            str(final_output_file)
+                        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        for tf in (v_tmp, a_tmp):
+                            try:
+                                if tf.exists(): tf.unlink()
+                            except Exception: pass
+                        if final_output_file.exists() and final_output_file.stat().st_size > 1000:
+                            log(f"SUCCESS with pytubefix ({pt_client}, Adaptive {adap_candidates[0].resolution}): {final_output_file.name}")
+                            return final_output_file
+
                     video_stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
                     if not video_stream:
                         video_stream = yt.streams.filter(file_extension='mp4').order_by('resolution').desc().first()
@@ -1408,6 +1513,11 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
                 log(f"pytubefix ({pt_client}, proxy={bool(pt_p)}) note: {ce}")
     except Exception as pfe:
         log(f"pytubefix engine note: {pfe}")
+
+    # Layer 3 Fallback: SaveTube External CDN API
+    st_file = download_youtube_savetube(url, output_dir, fmt, clean_id)
+    if st_file and st_file.exists() and st_file.stat().st_size > 1000:
+        return st_file
 
     return None
 
@@ -1749,12 +1859,15 @@ def download_spotify(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
         dur_filter = ["--match-filter", f"duration >= {min_d} & duration <= {max_d}"]
 
     search_plans = []
-    # Tier 1: YouTube Audio Search (WARP + Direct + Authenticated Cookies)
+    # Tier 1: YouTube Audio Search (BGUtil PO-Token + WARP + Direct + Authenticated Cookies)
     yt_query = f"ytsearch3:{query} audio"
+    bgutil_arg = "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416"
     if proxy:
+        search_plans.append(("WARP BGUtil PO-Token YouTube Search", yt_query, False, ["--extractor-args", "youtube:player_client=mweb,web", "--extractor-args", bgutil_arg], True, True))
         search_plans.append(("WARP YouTube Audio Search", yt_query, False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True, True))
         if has_cookies:
             search_plans.append(("WARP Authenticated YouTube Search", yt_query, True, ["--extractor-args", "youtube:player_client=default,-android,-ios"], True, True))
+    search_plans.append(("Direct BGUtil PO-Token YouTube Search", yt_query, False, ["--extractor-args", "youtube:player_client=mweb,web", "--extractor-args", bgutil_arg], False, True))
     search_plans.append(("Direct YouTube Audio Search", yt_query, False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], False, True))
     if has_cookies:
         search_plans.append(("Direct Authenticated YouTube Search", yt_query, True, ["--extractor-args", "youtube:player_client=default,-android,-ios"], False, True))
@@ -1807,7 +1920,7 @@ def download_spotify(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
                 if dur_sec > 20:
                     chosen = min(results, key=lambda v: abs((getattr(v, "length", 0) or 0) - dur_sec))
                 pt_proxies = {"http": proxy, "https": proxy} if proxy else None
-                yt = YouTube(chosen.watch_url, client="ANDROID", proxies=pt_proxies) if pt_proxies else YouTube(chosen.watch_url, client="ANDROID")
+                yt = YouTube(chosen.watch_url, client="WEB", proxies=pt_proxies) if pt_proxies else YouTube(chosen.watch_url, client="WEB")
                 stream = yt.streams.filter(only_audio=True).order_by("abr").desc().first()
                 if stream:
                     dl_p = stream.download(output_path=str(output_dir), filename=f"sp_raw_{clean_id}.m4a")

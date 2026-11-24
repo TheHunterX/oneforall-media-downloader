@@ -73,10 +73,10 @@ jobs:
       - name: Install yt-dlp & Browser Impersonation Engine
         run: |
           if command -v uv >/dev/null 2>&1; then
-            uv pip install --system -U yt-dlp pytubefix "curl_cffi>=0.10.0"
+            uv pip install --system -U yt-dlp bgutil-ytdlp-pot-provider pytubefix "curl_cffi>=0.10.0"
           else
             python3 -m pip install --no-cache-dir -U "pip>=25.0" "packaging>=24.2"
-            python3 -m pip install --no-cache-dir -U yt-dlp pytubefix "curl_cffi>=0.10.0"
+            python3 -m pip install --no-cache-dir -U yt-dlp bgutil-ytdlp-pot-provider pytubefix "curl_cffi>=0.10.0"
           fi
 
       - name: Setup Authenticated Cookies (if secret present)
@@ -125,6 +125,19 @@ jobs:
               sleep 1
             done
           fi
+
+      - name: Start BGUtil YouTube PO-Token Server
+        if: contains(github.event.inputs.url, 'youtube.com') || contains(github.event.inputs.url, 'youtu.be') || contains(github.event.inputs.url, 'spotify.com')
+        continue-on-error: true
+        run: |
+          docker run --name bgutil-provider -d --init --network host brainicism/bgutil-ytdlp-pot-provider
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS --max-time 2 http://127.0.0.1:4416/ping >/dev/null 2>&1; then
+              echo "BGUtil PO-Token server is READY on 127.0.0.1:4416!"
+              break
+            fi
+            sleep 1
+          done
 
       - name: Download Media Engine
         id: dl
