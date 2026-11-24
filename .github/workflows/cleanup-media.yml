@@ -1,0 +1,35 @@
+name: Auto-Purge Cached Media (>24h)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      max_age_hours:
+        description: 'Delete media older than N hours (use 0 to purge everything immediately)'
+        required: false
+        default: '24'
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  cleanup:
+    name: Purge Expired Release Assets & Artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run 24h Media Auto-Cleaner
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          HOURS="${{ github.event.inputs.max_age_hours || '24' }}"
+          python3 scripts/cleanup_old_media.py "$HOURS"

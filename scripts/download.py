@@ -2012,7 +2012,22 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: Optional
 # =====================================================================
 # Delivery & CDN Upload Handlers
 # =====================================================================
+def prune_expired_release_assets(tag: str = "v1.0-media", max_age_hours: float = 24.0):
+    """Opportunistically delete any GitHub Release media assets older than 24 hours."""
+    try:
+        cleaner = Path(__file__).parent / "cleanup_old_media.py"
+        if cleaner.exists():
+            subprocess.Popen(
+                [sys.executable, str(cleaner), str(max_age_hours)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+    except Exception as ce:
+        log(f"Opportunistic 24h cleanup note: {ce}")
+
 def upload_github_release(file_path: Path, tag: str = "v1.0-media") -> Optional[str]:
+    prune_expired_release_assets(tag=tag, max_age_hours=24.0)
     log(f"Uploading {file_path.name} to GitHub Releases ({tag})...")
     try:
         cmd = ["gh", "release", "upload", tag, str(file_path), "--clobber"]

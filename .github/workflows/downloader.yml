@@ -182,4 +182,4 @@ jobs:
         with:
           name: downloaded-media
           path: output/*
-          retention-days: 3
+          retention-days: 1
