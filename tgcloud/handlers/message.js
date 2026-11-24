@@ -85,9 +85,9 @@ function sanitizeUrl(rawUrl) {
     return trimmed.split('?')[0];
   }
 
-  // 4. Twitter / X: Normalize
+  // 4. Twitter / X: Normalize & strip /video/1, /photo/1, /mediaviewer suffixes
   if (trimmed.includes('twitter.com') || trimmed.includes('x.com')) {
-    return trimmed.split('?')[0];
+    return trimmed.split('?')[0].split('#')[0].replace(/(\/status\/[0-9]+)\/.*$/i, '$1');
   }
 
   // 5. Facebook / Reddit: Strip query trackers (keep ?v= for facebook watch)
@@ -543,6 +543,24 @@ export default async function (event) {
         if (fxRes.ok) {
           const fxData = await fxRes.json();
           const tweet = fxData?.tweet;
+
+          // Block +18 / Sensitive tweets on X per Telegram Terms of Service
+          if (tweet?.possibly_sensitive === true) {
+            if (waitMsg?.message_id) {
+              try {
+                await api.editMessageText({
+                  chat_id: chatId,
+                  message_id: waitMsg.message_id,
+                  parse_mode: 'HTML',
+                  text: t.nsfwBlocked
+                });
+                return;
+              } catch (_) {}
+            }
+            await api.sendMessage({ chat_id: chatId, parse_mode: 'HTML', text: t.nsfwBlocked });
+            return;
+          }
+
           const videos = tweet?.media?.videos || tweet?.media?.all || [];
           const v0 = videos[0];
           if (v0 && v0.url) {
@@ -561,15 +579,45 @@ export default async function (event) {
 
             const masterUrl = variants.length > 0 ? variants[0].url : v0.url;
             let streamUrl = masterUrl;
+            let fitsInChat = true;
             const MAX_FETCH_BYTES = 24 * 1024 * 1024;
             if (duration > 0 && variants.length > 0) {
+              fitsInChat = false;
               for (const v of variants) {
                 const estBytes = ((v.bitrate || 1500000) * duration) / 8;
                 if (estBytes <= MAX_FETCH_BYTES) {
                   streamUrl = v.url;
+                  fitsInChat = true;
                   break;
                 }
               }
+            } else if (duration > 900) {
+              fitsInChat = false;
+            }
+
+            const twKeyboard = {
+              inline_keyboard: [
+                [{ text: isFa ? '📥 لینک مستقیم کیفیت اصلی (1080p)' : '📥 Direct 1080p Master CDN', url: masterUrl }]
+              ]
+            };
+
+            if (!fitsInChat) {
+              const largeCaption =
+                `🐦 <b>${escapeHtml(tweetText)}</b>\n\n` +
+                `👤 <b>Author:</b> ${escapeHtml(authorName)} (@${escapeHtml(screenName)})\n` +
+                `🎯 <b>Quality:</b> Original HD (${width && height ? `${width}x${height}` : '1080p/720p'})\n\n` +
+                `⚡ ${isFa ? 'حجم این ویدیوی طولانی بالاتر از سقف ارسال مستقیم تلگرام است؛ با دکمه زیر مستقیماً با سرعت کامل دانلود کنید:' : 'This long video exceeds Telegram direct upload limits — tap below to download directly from X Master CDN:'}\n\n` +
+                `📡 @OneForAllHub`;
+              if (thumbUrl) {
+                try {
+                  await api.sendPhoto({ chat_id: chatId, photo: thumbUrl, caption: largeCaption, parse_mode: 'HTML', reply_markup: twKeyboard });
+                  if (waitMsg?.message_id) { try { await api.deleteMessage({ chat_id: chatId, message_id: waitMsg.message_id }); } catch (_) {} }
+                  return;
+                } catch (_) {}
+              }
+              await api.sendMessage({ chat_id: chatId, text: largeCaption, parse_mode: 'HTML', reply_markup: twKeyboard });
+              if (waitMsg?.message_id) { try { await api.deleteMessage({ chat_id: chatId, message_id: waitMsg.message_id }); } catch (_) {} }
+              return;
             }
 
             if (waitMsg?.message_id) {
@@ -593,12 +641,6 @@ export default async function (event) {
               `👤 <b>Author:</b> ${escapeHtml(authorName)} (@${escapeHtml(screenName)})\n` +
               `🎯 <b>Quality:</b> Original HD (${width && height ? `${width}x${height}` : '1080p/720p'})\n\n` +
               `📡 @OneForAllHub`;
-
-            const twKeyboard = {
-              inline_keyboard: [
-                [{ text: isFa ? '📥 لینک مستقیم کیفیت اصلی (1080p)' : '📥 Direct 1080p Master CDN', url: masterUrl }]
-              ]
-            };
 
             try {
               const [videoBytes, thumbBytes] = await Promise.all([

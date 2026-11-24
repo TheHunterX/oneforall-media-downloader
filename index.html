@@ -1217,12 +1217,19 @@
             const isFa = currentLang === 'fa';
             updateProgress(35, isFa ? 'در حال اتصال به CDN پرسرعت توییتر / X...' : 'Connecting to Twitter / X HD CDN...', '~1s');
             try {
-                const fxUrl = url.replace(/^https?:\/\/(?:www\.)?(?:twitter\.com|x\.com)\//i, 'https://api.fxtwitter.com/');
+                const cleanTw = url.split('?')[0].split('#')[0].replace(/(\/status\/[0-9]+)\/.*$/i, '$1');
+                const fxUrl = cleanTw.replace(/^https?:\/\/(?:www\.)?(?:twitter\.com|x\.com)\//i, 'https://api.fxtwitter.com/');
                 const res = await fetch(fxUrl);
                 if (res.ok) {
                     updateProgress(85, isFa ? 'استخراج بالاترین بیت‌ریت 1080p MP4...' : 'Selecting highest bitrate 1080p MP4 stream...', '~0s');
                     const data = await res.json();
                     const tweet = data?.tweet;
+                    if (tweet?.possibly_sensitive === true) {
+                        showError(isFa
+                            ? '⛔ به دلیل قوانین تلگرام، این سرویس قادر به پردازش و دانلود پست‌های حاوی محتوای بزرگسالان (+۱۸) نیست.'
+                            : "⛔ Due to Telegram's Terms of Service, downloading +18 / sensitive content is not permitted.");
+                        return true;
+                    }
                     const videos = tweet?.media?.videos || tweet?.media?.all || [];
                     const v0 = videos[0];
                     if (v0 && v0.url) {

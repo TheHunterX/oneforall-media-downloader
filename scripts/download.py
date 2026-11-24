@@ -200,9 +200,10 @@ def sanitize_url(raw_url: str) -> str:
     if "tiktok.com" in raw_url:
         return raw_url.split("?")[0]
 
-    # 4. Twitter / X: Normalize
+    # 4. Twitter / X: Normalize & strip /video/1, /photo/1, /mediaviewer suffixes
     if "twitter.com" in raw_url or "x.com" in raw_url:
-        return raw_url.split("?")[0]
+        clean_tw = raw_url.split("?")[0].split("#")[0]
+        return re.sub(r'(/status/[0-9]+)/.*$', r'\1', clean_tw, flags=re.IGNORECASE)
 
     # 5. Pinterest: Strip query trackers & localize host
     if "pinterest." in raw_url:
@@ -600,6 +601,11 @@ def download_twitter(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
         with urllib.request.urlopen(req_fx, timeout=10) as r_fx:
             fx_data = json.loads(r_fx.read().decode("utf-8"))
         tweet = fx_data.get("tweet") or {}
+        if tweet.get("possibly_sensitive") is True:
+            log("BLOCKED: +18 / sensitive Twitter/X post rejected per Telegram Terms of Service.")
+            set_error_reason("nsfw", "⛔ <b>Restricted Content (+18):</b> Sorry, due to <b>Telegram's Terms of Service</b>, this bot is unable to download +18 / sensitive content.")
+            write_state("error", 0, "Blocked (+18 restricted content)")
+            sys.exit(1)
         media_obj = tweet.get("media") or {}
         videos = media_obj.get("videos") or media_obj.get("all") or []
         if videos:
