@@ -1,7 +1,7 @@
 import { api, fetch, InputFile } from 'sdk';
 import { db } from 'sdk/db';
 import { downloads } from '../schema.js';
-import { getGithubToken, dispatchCloudWorkflow, resolveShortUrl, storeFailureReport } from '../lib/vault.js';
+import { getGithubToken, dispatchCloudWorkflow, storeShortUrl, resolveShortUrl, storeFailureReport } from '../lib/vault.js';
 import { getUserLang, setUserLang, texts, buildStartMessage } from '../lib/i18n.js';
 
 const ADMIN_IDS = new Set([369287480, 369693896, 0x160914c8]); // Primary Admin Auth
@@ -387,7 +387,15 @@ export default async function (input, ctx) {
             chat_id: adminId,
             parse_mode: 'HTML',
             disable_web_page_preview: true,
-            text: adminMsg
+            text: adminMsg,
+            reply_markup: {
+              inline_keyboard: [[
+                {
+                  text: '✅ ارسال پیام «مشکل حل شد» به کاربر',
+                  callback_data: `fix_done|${userId}|${errKey}`
+                }
+              ]]
+            }
           });
         } catch (adminErr) {
           console.warn(`Failed to notify admin ${adminId}:`, adminErr?.message || adminErr);
@@ -415,6 +423,147 @@ export default async function (input, ctx) {
                 }
               ]]
             }
+          });
+        } catch (_) {}
+      }
+      return;
+    }
+
+    // ==================================================================
+    // Case -1.5: Admin Notifies User That Reported Problem Is Fixed
+    // ==================================================================
+    if (data === 'fix_done_already') {
+      if (!isAdmin(userId)) {
+        try {
+          await api.answerCallbackQuery({
+            callback_query_id: callbackQueryId,
+            text: '⛔ Admin access required.',
+            show_alert: true
+          });
+        } catch (_) {}
+        return;
+      }
+      try {
+        await api.answerCallbackQuery({
+          callback_query_id: callbackQueryId,
+          text: '✅ قبلاً به این کاربر اطلاع داده شده است.'
+        });
+      } catch (_) {}
+      return;
+    }
+
+    if (data.startsWith('fix_done|')) {
+      if (!isAdmin(userId)) {
+        try {
+          await api.answerCallbackQuery({
+            callback_query_id: callbackQueryId,
+            text: '⛔ Admin access required.',
+            show_alert: true
+          });
+        } catch (_) {}
+        return;
+      }
+
+      const parts = data.split('|');
+      const targetUserId = parts[1];
+      const errKey = parts[2] || '';
+      let report = { url: '', format: '' };
+      try {
+        const raw = await resolveShortUrl(errKey);
+        if (raw && raw.startsWith('{')) {
+          report = { ...report, ...JSON.parse(raw) };
+        }
+      } catch (_) {}
+
+      const targetLang = await getUserLang(targetUserId);
+      const targetIsFa = targetLang === 'fa';
+
+      let retryMarkup = undefined;
+      if (report.url) {
+        let retryCb = '';
+        const ytMatch = report.url.match(/(?:v=|\/shorts\/|\/live\/|\/embed\/|youtu\.be\/|\/v\/)([a-zA-Z0-9_-]{8,15})/);
+        if (ytMatch && ytMatch[1]) {
+          retryCb = `yt:${report.format || 'video-720p'}:${ytMatch[1]}`;
+        } else if (report.url.includes('instagram.com')) {
+          const sk = await storeShortUrl(report.url);
+          retryCb = `ig:${report.format || 'video-best'}:${sk}`;
+        } else {
+          const sk = await storeShortUrl(report.url);
+          retryCb = `gen:${report.format || 'video-best'}:${sk}`;
+        }
+        retryMarkup = {
+          inline_keyboard: [[
+            {
+              text: targetIsFa ? '🔄 دانلود مجدد لینک' : '🔄 Download Now',
+              callback_data: retryCb
+            }
+          ]]
+        };
+      }
+
+      const fixedText = targetIsFa
+        ? [
+            '✅ <b>مشکل دانلود لینک شما برطرف شد!</b>',
+            '',
+            'سلام! گزارشی که برای تیم پشتیبانی ارسال کرده بودید بررسی و برطرف شد. 🛠✨',
+            report.url ? `🔗 <b>لینک شما:</b> <code>${escapeHtml(report.url)}</code>` : '',
+            '',
+            'روی دکمه زیر بزنید یا دوباره لینک را بفرستید تا با کیفیت کامل برایتان ارسال شود. 🙏',
+            '',
+            '📡 @OneForAllHub'
+          ].filter((line, idx) => line !== '' || idx !== 3).join('\n')
+        : [
+            '✅ <b>Issue Resolved — Ready to Download!</b>',
+            '',
+            'Hi! Good news — the download issue you reported to our team has been fixed. 🛠✨',
+            report.url ? `🔗 <b>Your Link:</b> <code>${escapeHtml(report.url)}</code>` : '',
+            '',
+            'Tap the button below or send your link again anytime to download in full HD quality! 🙏',
+            '',
+            '📡 @OneForAllHub'
+          ].filter((line, idx) => line !== '' || idx !== 3).join('\n');
+
+      try {
+        const msgParams = {
+          chat_id: Number(targetUserId),
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          text: fixedText
+        };
+        if (retryMarkup) msgParams.reply_markup = retryMarkup;
+        await api.sendMessage(msgParams);
+
+        try {
+          await api.answerCallbackQuery({
+            callback_query_id: callbackQueryId,
+            text: '✅ پیام «مشکل حل شد» با موفقیت برای کاربر ارسال شد!',
+            show_alert: true
+          });
+        } catch (_) {}
+
+        if (messageId) {
+          try {
+            await api.editMessageReplyMarkup({
+              chat_id: chatId,
+              message_id: messageId,
+              reply_markup: {
+                inline_keyboard: [[
+                  {
+                    text: '✅ به کاربر اطلاع داده شد (Sent)',
+                    callback_data: 'fix_done_already'
+                  }
+                ]]
+              }
+            });
+          } catch (_) {}
+        }
+      } catch (sendErr) {
+        console.warn(`Failed to send fix_done notice to ${targetUserId}:`, sendErr?.message || sendErr);
+        try {
+          await api.answerCallbackQuery({
+            callback_query_id: callbackQueryId,
+            text: '⚠️ ارسال پیام به کاربر ممکن نشد (احتمالاً ربات را بلاک کرده است).',
+            show_alert: true
           });
         } catch (_) {}
       }

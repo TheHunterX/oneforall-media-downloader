@@ -41,12 +41,17 @@ permissions:
 jobs:
   download:
     name: Download and Deliver Media
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Start Live Progress Daemon
         if: github.event.inputs.chat_id != '' && github.event.inputs.message_id != ''
@@ -67,7 +72,12 @@ jobs:
 
       - name: Install yt-dlp & Browser Impersonation Engine
         run: |
-          python3 -m pip install --no-cache-dir -U yt-dlp pytubefix "curl_cffi>=0.10.0"
+          if command -v uv >/dev/null 2>&1; then
+            uv pip install --system -U yt-dlp pytubefix "curl_cffi>=0.10.0"
+          else
+            python3 -m pip install --no-cache-dir -U "pip>=25.0" "packaging>=24.2"
+            python3 -m pip install --no-cache-dir -U yt-dlp pytubefix "curl_cffi>=0.10.0"
+          fi
 
       - name: Setup Authenticated Cookies (if secret present)
         env:
