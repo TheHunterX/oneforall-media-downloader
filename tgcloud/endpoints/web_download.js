@@ -1,6 +1,7 @@
 import { db, EndpointError } from 'sdk';
 import { downloads } from '../schema.js';
 import { dispatchCloudWorkflow } from '../lib/vault.js';
+import { isNsfwUrl } from '../lib/nsfw.js';
 
 export default async function (input, ctx) {
   const url = (input && typeof input.url === 'string') ? input.url.trim() : '';
@@ -8,6 +9,10 @@ export default async function (input, ctx) {
 
   if (!url || !url.startsWith('http')) {
     throw new EndpointError('Invalid media URL provided.', { code: 'INVALID_URL' });
+  }
+
+  if (isNsfwUrl(url)) {
+    throw new EndpointError("Due to Telegram's Terms of Service, downloading +18 / pornographic content is not permitted.", { code: 'NSFW_BLOCKED' });
   }
 
   const userId = ctx?.initData?.user?.id || 0;

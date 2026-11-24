@@ -68,6 +68,7 @@ export const texts = {
     subNotJoined: "⚠️ You haven't joined @OneForAllHub yet! Please join first.",
     
     invalidUrl: "⚠️ <b>Invalid Link</b>\n\nPlease send a valid link from YouTube, Instagram, Spotify, TikTok, Twitter/X, Pinterest, SoundCloud, Reddit, or Facebook.\n<i>Example:</i> <code>https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b</code>",
+    nsfwBlocked: "⛔ <b>Restricted Content (+18)</b>\n\nSorry, due to <b>Telegram's Terms of Service</b> and platform policies, this bot is unable to process or download +18 / pornographic content.",
     invalidYtUrl: "⚠️ <b>Invalid YouTube Link</b>\n\nCould not extract a valid YouTube video ID. Please check the URL and try again.",
     
     ytCaption: "🎬 <b>Select a quality to download directly in chat:</b>",
@@ -110,6 +111,7 @@ export const texts = {
     subNotJoined: "⚠️ شما هنوز در کانال @OneForAllHub عضو نشده‌اید! لطفاً ابتدا عضو شوید.",
     
     invalidUrl: "⚠️ <b>لینک نامعتبر</b>\n\nلطفاً یک لینک معتبر از یوتیوب، اینستاگرام، اسپاتیفای، تیک‌تاک، توییتر/X، پینترست، ساندکلود، ردیت یا فیسبوک ارسال کنید.\n<i>مثال:</i> <code>https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b</code>",
+    nsfwBlocked: "⛔ <b>محتوای غیرمجاز (+۱۸)</b>\n\nمتاسفیم؛ به دلیل <b>قوانین تلگرام</b>، این ربات قادر به پردازش و دانلود لینک‌های حاوی محتوای بزرگسالان (+۱۸ / پورن) نیست.",
     invalidYtUrl: "⚠️ <b>لینک نامعتبر یوتیوب</b>\n\nشناسه ویدیو یافت نشد. لطفاً لینک کامل ویدیو را ارسال نمایید.",
     
     ytCaption: "🎬 <b>کیفیت مورد نظر خود را برای دانلود انتخاب کنید:</b>",

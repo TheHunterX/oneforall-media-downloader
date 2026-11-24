@@ -3,6 +3,7 @@ import { db } from 'sdk/db';
 import { downloads } from '../schema.js';
 import { getGithubToken, dispatchCloudWorkflow, storeShortUrl, resolveShortUrl, storeFailureReport } from '../lib/vault.js';
 import { getUserLang, setUserLang, texts, buildStartMessage } from '../lib/i18n.js';
+import { isNsfwUrl } from '../lib/nsfw.js';
 
 const ADMIN_IDS = new Set([369287480, 369693896, 0x160914c8]); // Primary Admin Auth
 function isAdmin(userId) {
@@ -984,6 +985,15 @@ export default async function (input, ctx) {
       const fmt = parts[1] || 'video-720p';
       const rawParam = parts.slice(2).join(':');
       const rawUrl = await resolveShortUrl(rawParam);
+      if (isNsfwUrl(rawUrl)) {
+        const blockMsg = t.nsfwBlocked;
+        try {
+          await api.editMessageText({ chat_id: chatId, message_id: messageId, parse_mode: 'HTML', text: blockMsg });
+        } catch (_) {
+          try { await api.sendMessage({ chat_id: chatId, parse_mode: 'HTML', text: blockMsg }); } catch (_) {}
+        }
+        return;
+      }
       const isAudio = fmt === 'audio-mp3';
       const title = isAudio ? 'Downloading Audio MP3...' : 'Downloading Media (Best Quality)...';
 

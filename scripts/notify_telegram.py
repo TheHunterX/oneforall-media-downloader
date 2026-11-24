@@ -103,37 +103,50 @@ export default async function(args) {
         reasonLine = '🔒 <b>Private Account / Post:</b> This media belongs to a private account and cannot be accessed publicly.';
     } else if (args.err_code === 'age') {
         reasonLine = '🔞 <b>Age-Restricted Media:</b> This post has age restrictions that blocked automated access.';
+    } else if (args.err_code === 'nsfw') {
+        reasonLine = "⛔ <b>Restricted Content (+18):</b> Sorry, due to <b>Telegram's Terms of Service</b>, this bot is unable to process or download +18 / pornographic content.";
     } else if (args.err_code === 'unavailable') {
         reasonLine = '🗑️ <b>Unavailable Media:</b> This post or video has been deleted or removed by the creator.';
     } else if (args.err_detail) {
         reasonLine = args.err_detail;
     }
 
+    const isNsfwBlock = args.err_code === 'nsfw';
     const errKey = 'err_' + Math.random().toString(36).substring(2, 10);
-    try {
-        const reportPayload = JSON.stringify({
-            url: String(args.raw_url || ''),
-            format: String(args.req_fmt || ''),
-            err_code: String(args.err_code || ''),
-            err_detail: String(args.err_detail || 'Download engine failed to retrieve media'),
-            chat_id: String(args.chat_id || ''),
-            ts: new Date().toISOString()
-        });
-        await db.run(sql`CREATE TABLE IF NOT EXISTS url_cache (k TEXT PRIMARY KEY, u TEXT)`);
-        await db.run(sql`INSERT OR REPLACE INTO url_cache (k, u) VALUES (${errKey}, ${reportPayload})`);
-    } catch (_) {}
+    if (!isNsfwBlock) {
+        try {
+            const reportPayload = JSON.stringify({
+                url: String(args.raw_url || ''),
+                format: String(args.req_fmt || ''),
+                err_code: String(args.err_code || ''),
+                err_detail: String(args.err_detail || 'Download engine failed to retrieve media'),
+                chat_id: String(args.chat_id || ''),
+                ts: new Date().toISOString()
+            });
+            await db.run(sql`CREATE TABLE IF NOT EXISTS url_cache (k TEXT PRIMARY KEY, u TEXT)`);
+            await db.run(sql`INSERT OR REPLACE INTO url_cache (k, u) VALUES (${errKey}, ${reportPayload})`);
+        } catch (_) {}
+    }
 
-    const failText = [
-        '❌ <b>Download Failed</b>',
-        '',
-        reasonLine,
-        '',
-        '💡 <i>Tip: Make sure the post is public, or tap the button below to report this link to Admin.</i>',
-        '',
-        '📡 @OneForAllHub'
-    ].join(NL);
+    const failText = isNsfwBlock
+        ? [
+            '⛔ <b>Restricted Content (+18)</b>',
+            '',
+            "Sorry, due to <b>Telegram's Terms of Service</b> and platform policies, this bot is unable to process or download +18 / pornographic content.",
+            '',
+            'متاسفیم؛ به دلیل <b>قوانین تلگرام</b>، این ربات قادر به پردازش و دانلود لینک‌های حاوی محتوای بزرگسالان (+۱۸ / پورن) نیست.'
+          ].join(NL)
+        : [
+            '❌ <b>Download Failed</b>',
+            '',
+            reasonLine,
+            '',
+            '💡 <i>Tip: Make sure the post is public, or tap the button below to report this link to Admin.</i>',
+            '',
+            '📡 @OneForAllHub'
+          ].join(NL);
 
-    const failKeyboard = {
+    const failKeyboard = isNsfwBlock ? { inline_keyboard: [] } : {
         inline_keyboard: [[
             { text: '🛠 Send to Admin (Fix Problem)', callback_data: 'report_err|' + errKey }
         ]]

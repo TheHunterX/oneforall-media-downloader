@@ -3,6 +3,7 @@ import { db } from 'sdk/db';
 import { downloads } from '../schema.js';
 import { dispatchCloudWorkflow, storeShortUrl } from '../lib/vault.js';
 import { getUserLang, setUserLang, texts, buildStartMessage } from '../lib/i18n.js';
+import { isNsfwUrl } from '../lib/nsfw.js';
 
 const ADMIN_IDS = new Set([369287480, 369693896, 0x160914c8]); // Primary Admin Auth
 function isAdmin(userId) {
@@ -284,6 +285,16 @@ export default async function (event) {
     }
 
     const cleanUrl = sanitizeUrl(match[1]);
+
+    // Block +18 / Porn / Adult sites per Telegram Terms of Service
+    if (isNsfwUrl(cleanUrl) || isNsfwUrl(match[1])) {
+      await api.sendMessage({
+        chat_id: chatId,
+        parse_mode: 'HTML',
+        text: t.nsfwBlocked
+      });
+      return;
+    }
 
     // -------------------------------------------------------------
     // 5. YouTube Platform: Fast oEmbed Metadata & Quality Selection

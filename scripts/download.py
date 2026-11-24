@@ -2068,6 +2068,60 @@ def upload_media_cdn(file_path: Path) -> Optional[str]:
         return uguu_link
     return None
 
+_SAFE_DOMAINS = (
+    "youtube.com", "youtu.be", "instagram.com", "ddinstagram.com", "tiktok.com",
+    "twitter.com", "x.com", "fxtwitter.com", "vxtwitter.com", "fixvx.com",
+    "spotify.com", "spotify.link", "spoti.fi", "pinterest.com", "pin.it",
+    "soundcloud.com", "facebook.com", "fb.watch", "vimeo.com", "twitch.tv",
+    "dailymotion.com", "threads.net", "bsky.app", "aparat.com", "bilibili.com",
+)
+_ADULT_DOMAINS = {
+    "pornhub.com", "pornhubpremium.com", "thumbzilla.com", "redtube.com", "youporn.com",
+    "tube8.com", "xtube.com", "spankbang.com", "spankwire.com", "xvideos.com",
+    "xvideos2.com", "xvideos3.com", "xnxx.com", "xnxx2.com", "xnxx3.com",
+    "xhamster.com", "xhamster2.com", "xhamsterlive.com", "xhcdn.com",
+    "eporner.com", "hqporner.com", "beeg.com", "tnaflix.com", "empflix.com",
+    "drtuber.com", "sunporno.com", "txxx.com", "upornia.com", "hdzog.com",
+    "missav.com", "jable.tv", "njav.tv", "supjav.com", "brazzers.com",
+    "realitykings.com", "bangbros.com", "naughtyamerica.com", "chaturbate.com",
+    "stripchat.com", "bongacams.com", "cam4.com", "myfreecams.com", "livejasmin.com",
+    "onlyfans.com", "fansly.com", "manyvids.com", "fapello.com", "coomer.su",
+    "coomer.party", "kemono.su", "thothub.to", "erome.com", "bunkr.si",
+    "redgifs.com", "rule34.xxx", "e621.net", "nhentai.net", "hanime.tv",
+    "motherless.com", "heavy-r.com", "sxyprn.com", "youjizz.com",
+    "porniran.com", "shahvani.com", "iraniansex.com", "superirani.com",
+    "persianporn.com", "sekshot.com",
+}
+_ADULT_KEYWORDS = (
+    "porn", "xnxx", "xvideos", "xhamster", "redtube", "youjizz", "spankbang",
+    "hentai", "rule34", "chaturbate", "stripchat", "onlyfans", "fansly",
+    "redgifs", "erome", "brazzers", "xxx", "sexvid", "xvid", "javhd", "missav",
+    "eporner", "beeg", "motherless", "fapello", "thothub",
+)
+
+def is_nsfw_url(check_url: str) -> bool:
+    try:
+        parsed = urllib.parse.urlparse(check_url.strip())
+        host = (parsed.hostname or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        path = (parsed.path or "").lower()
+        if not host:
+            return False
+        if host == "reddit.com" or host.endswith(".reddit.com"):
+            return bool(re.search(r"/r/(?:nsfw|porn|gonewild|realgirls|hentai|rule34|sex|cumsluts|milf|boobs|ass|anal|blowjobs|nsfw_gif|nsfw_videos|iraniannsfw)(?:/|$)", path))
+        if any(host == s or host.endswith("." + s) for s in _SAFE_DOMAINS):
+            return False
+        if host.endswith((".xxx", ".porn", ".sex", ".adult")):
+            return True
+        if any(host == d or host.endswith("." + d) for d in _ADULT_DOMAINS):
+            return True
+        if any(kw in host for kw in _ADULT_KEYWORDS):
+            return True
+    except Exception:
+        pass
+    return False
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python download.py <url> [format]")
@@ -2075,7 +2129,17 @@ def main():
 
     raw_url = sys.argv[1].strip()
     fmt = sys.argv[2].strip() if len(sys.argv) > 2 else "video-720p"
+    if is_nsfw_url(raw_url):
+        log("BLOCKED: +18 / adult URL rejected per Telegram Terms of Service.")
+        set_error_reason("nsfw", "⛔ <b>Restricted Content (+18):</b> Sorry, due to <b>Telegram's Terms of Service</b>, this bot is unable to download +18 / pornographic content.")
+        write_state("error", 0, "Blocked (+18 restricted content)")
+        sys.exit(1)
     url = sanitize_url(raw_url)
+    if is_nsfw_url(url):
+        log("BLOCKED: Unshortened +18 / adult URL rejected per Telegram Terms of Service.")
+        set_error_reason("nsfw", "⛔ <b>Restricted Content (+18):</b> Sorry, due to <b>Telegram's Terms of Service</b>, this bot is unable to download +18 / pornographic content.")
+        write_state("error", 0, "Blocked (+18 restricted content)")
+        sys.exit(1)
     if "spotify.com" in url or "spotify.link" in url or "spoti.fi" in url:
         fmt = "audio-mp3"
     is_audio = fmt == "audio-mp3"
