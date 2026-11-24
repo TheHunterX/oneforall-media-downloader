@@ -1263,91 +1263,65 @@ def download_instagram(url: str, output_dir: Path, fmt: str, proxy: Optional[str
 
 # =====================================================================
 # =====================================================================
-# 4. YouTube Engine (BGUtil PO-Token + pytubefix WEB + SaveTube CDN)
+# 4. YouTube Engine (Auto WARP IP Rotation + BGUtil PO-Token + pytubefix WEB)
 # =====================================================================
-def download_youtube_savetube(url: str, output_dir: Path, fmt: str, clean_id: str) -> Optional[Path]:
-    """External SaveTube CDN API fallback (AES-128-CBC decrypted via system openssl)."""
-    log("Invoking SaveTube CDN external YouTube fallback engine...")
-    report_progress(68, "Downloading via high-speed YouTube CDN mirror...")
-    st_headers = {
-        "Content-Type": "application/json",
-        "Origin": "https://ytsave.savetube.me",
-        "Referer": "https://ytsave.savetube.me/",
-        "User-Agent": GENERIC_CHROME_UA
-    }
+def rotate_warp_proxy(attempt: int = 1) -> bool:
+    """Rotate Cloudflare WARP exit IP by creating a fresh wgcf/wireproxy tunnel on 127.0.0.1:8080."""
+    if os.name == "nt" or not Path("/usr/local/bin/wireproxy").exists():
+        return False
+    endpoints = ["162.159.193.1:2408", "188.114.96.1:2408", "162.159.195.1:2408", "188.114.98.1:2408"]
+    ep = endpoints[(attempt - 1) % len(endpoints)]
     try:
-        cdn_req = urllib.request.Request("https://media.savetube.me/api/random-cdn", headers={"User-Agent": GENERIC_CHROME_UA})
-        with urllib.request.urlopen(cdn_req, timeout=10) as r:
-            cdn_host = json.loads(r.read().decode("utf-8"))["cdn"]
+        rot_dir = Path(f"/tmp/warp_rot_{attempt}")
+        rot_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["pkill", "-9", "-f", "wireproxy"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        clean_env = {k: v for k, v in os.environ.items() if not k.lower().endswith("proxy")}
 
-        info_req = urllib.request.Request(
-            f"https://{cdn_host}/v2/info",
-            data=json.dumps({"url": url}).encode("utf-8"),
-            headers=st_headers,
-            method="POST"
+        if Path("/usr/local/bin/wgcf").exists():
+            subprocess.run(["/usr/local/bin/wgcf", "register", "--accept-tos"], cwd=str(rot_dir), env=clean_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
+            subprocess.run(["/usr/local/bin/wgcf", "generate"], cwd=str(rot_dir), env=clean_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+
+        prof = rot_dir / "wgcf-profile.conf"
+        if not prof.exists() and Path("wgcf-profile.conf").exists():
+            shutil.copy2("wgcf-profile.conf", prof)
+        if not prof.exists():
+            return False
+
+        updated_prof = re.sub(r'(?m)^Endpoint\s*=.*$', f'Endpoint = {ep}', prof.read_text(encoding='utf-8'))
+        prof.write_text(updated_prof, encoding='utf-8')
+
+        wp_conf = rot_dir / "wireproxy.conf"
+        wp_conf.write_text(
+            f"WGConfig = {prof}\n\n"
+            "[Socks5]\n"
+            "BindAddress = 127.0.0.1:1080\n\n"
+            "[HTTP]\n"
+            "BindAddress = 127.0.0.1:8080\n",
+            encoding="utf-8"
         )
-        with urllib.request.urlopen(info_req, timeout=15) as r:
-            info = json.loads(r.read().decode("utf-8"))
-        if not info.get("status") or not info.get("data"):
-            log(f"SaveTube v2/info returned status={info.get('status')}")
-            return None
-
-        enc_b64 = re.sub(r"\s+", "", info["data"])
-        raw_bytes = base64.b64decode(enc_b64)
-        iv_hex = raw_bytes[:16].hex()
-        ciphertext = raw_bytes[16:]
-        proc = subprocess.run(
-            ["openssl", "enc", "-d", "-aes-128-cbc", "-K", "C5D58EF67A7584E4A29F6C35BBC4EB12", "-iv", iv_hex],
-            input=ciphertext,
-            capture_output=True,
-            timeout=10,
-            check=True
+        subprocess.Popen(
+            ["/usr/local/bin/wireproxy", "-c", str(wp_conf)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=clean_env
         )
-        media_data = json.loads(proc.stdout.decode("utf-8"))
-
-        is_audio = fmt == "audio-mp3"
-        if is_audio:
-            dl_type = "audio"
-            ext = "mp3"
-            aud_quals = [str(a.get("quality")) for a in (media_data.get("audio_formats") or []) if a.get("quality") is not None]
-            qual = "192" if "192" in aud_quals else ("128" if "128" in aud_quals else (aud_quals[0] if aud_quals else "128"))
-        else:
-            dl_type = "video"
-            ext = "mp4"
-            target_map = {"video-1080p": 1080, "video-720p": 720, "video-480p": 480, "video-360p": 360, "video-best": 1080}
-            target_h = target_map.get(fmt, 720)
-            vid_quals = sorted(
-                {int(str(v.get("quality"))) for v in (media_data.get("video_formats") or []) if str(v.get("quality", "")).isdigit()},
-                reverse=True
+        for _ in range(5):
+            time.sleep(1)
+            res = subprocess.run(
+                ["curl", "-fsS", "--connect-timeout", "2", "--max-time", "3", "--proxy", "http://127.0.0.1:8080", "https://www.cloudflare.com/cdn-cgi/trace"],
+                capture_output=True,
+                text=True,
+                env=clean_env,
+                timeout=5
             )
-            eligible = [q for q in vid_quals if q <= target_h]
-            qual = str(eligible[0]) if eligible else (str(vid_quals[-1]) if vid_quals else "720")
-
-        dl_req = urllib.request.Request(
-            f"https://{cdn_host}/download",
-            data=json.dumps({
-                "id": media_data["id"],
-                "key": media_data["key"],
-                "downloadType": dl_type,
-                "quality": str(qual)
-            }).encode("utf-8"),
-            headers=st_headers,
-            method="POST"
-        )
-        with urllib.request.urlopen(dl_req, timeout=20) as r:
-            dl_json = json.loads(r.read().decode("utf-8"))
-        dl_url = (dl_json.get("data") or {}).get("downloadUrl")
-        if not dl_url:
-            log("SaveTube /download returned empty downloadUrl")
-            return None
-
-        final_file = output_dir / f"{clean_id}_OneForAllHub.{ext}"
-        if download_stream_url(dl_url, final_file, proxy=None) and final_file.exists() and final_file.stat().st_size > 1000:
-            log(f"SUCCESS with SaveTube CDN fallback: {final_file.name} ({final_file.stat().st_size} bytes)")
-            return final_file
-    except Exception as ste:
-        log(f"SaveTube fallback note: {ste}")
-    return None
+            if res.returncode == 0 and "warp=on" in res.stdout:
+                ip_line = next((l.strip() for l in res.stdout.splitlines() if l.startswith("ip=")), "ip=rotated")
+                log(f"WARP IP rotation #{attempt} READY (endpoint={ep}, exit_{ip_line})!")
+                return True
+    except Exception as re_err:
+        log(f"WARP rotation #{attempt} note: {re_err}")
+    return False
 
 def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] = None) -> Optional[Path]:
     """
@@ -1386,24 +1360,10 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
 
     has_cookies = _find_master_cookies_file() is not None
 
-    # Tuple format: (plan_name, use_cookies, extra_args, use_proxy)
+    # Tuple format helper + Phase A (WARP + BGUtil fetch_pot=always with automatic WARP IP rotation)
     bgutil_arg = "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416"
-    plans = []
-    if proxy:
-        plans.append(("WARP + BGUtil PO-Token (mweb/web)", False, ["--extractor-args", "youtube:player_client=mweb,web,web_embedded", "--extractor-args", bgutil_arg], True))
-        plans.append(("WARP + BGUtil PO-Token (tv_embedded/safari)", False, ["--extractor-args", "youtube:player_client=tv_embedded,web_safari", "--extractor-args", bgutil_arg], True))
-        if has_cookies:
-            plans.append(("WARP + BGUtil + Cookies", True, ["--extractor-args", "youtube:player_client=web,mweb", "--extractor-args", bgutil_arg], True))
-        plans.append(("WARP Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True))
 
-    # Native direct connection fallbacks
-    plans.append(("Direct + BGUtil PO-Token (mweb/web)", False, ["--extractor-args", "youtube:player_client=mweb,web,web_embedded", "--extractor-args", bgutil_arg], False))
-    plans.append(("Direct + BGUtil PO-Token (tv_embedded/safari)", False, ["--extractor-args", "youtube:player_client=tv_embedded,web_safari", "--extractor-args", bgutil_arg], False))
-    if has_cookies:
-        plans.append(("Direct + BGUtil + Cookies", True, ["--extractor-args", "youtube:player_client=web,mweb", "--extractor-args", bgutil_arg], False))
-    plans.append(("Direct Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], False))
-
-    for plan_name, use_cookies, extra_args, use_proxy in plans:
+    def _run_yt_plan(plan_name: str, use_cookies: bool, extra_args: list, use_proxy: bool, sock_timeout: str = "12"):
         log(f"YouTube Engine trying: {plan_name} (proxy={use_proxy}, cookies={use_cookies})...")
         report_progress(53, f"Fetching YouTube stream ({plan_name})...")
         c_args = get_cookie_args(url) if use_cookies else []
@@ -1411,7 +1371,7 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
             *get_ytdlp_cmd(),
             "--no-playlist",
             "--force-ipv4",
-            "--socket-timeout", "15",
+            "--socket-timeout", sock_timeout,
             "--retries", "2",
             "--fragment-retries", "3",
             "--file-access-retries", "2",
@@ -1435,16 +1395,51 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
             cmd.extend(["--proxy", proxy])
 
         cmd.append(url)
-
+        out_str = ""
         try:
-            code, out_str = run_ytdlp_with_progress(cmd, plan_env, timeout=40, stage_label="Downloading YouTube stream")
+            code, out_str = run_ytdlp_with_progress(cmd, plan_env, timeout=38, stage_label="Downloading YouTube stream")
             log(f"Plan output summary: {out_str[-250:]}")
             f = get_latest_file(output_dir, prefer_video=not is_audio)
             if f and f.stat().st_size > 1000:
                 log(f"SUCCESS with {plan_name}: {f.name} ({f.stat().st_size} bytes)")
-                return f
+                return f, out_str
         except Exception as pe:
             log(f"Plan {plan_name} note: {pe}")
+        return None, out_str
+
+    # Phase A: Primary WARP + BGUtil PO-Token (fetch_pot=always) with up to 3 automatic WARP IP rotations
+    if proxy:
+        primary_args = ["--extractor-args", "youtube:player_client=mweb,web,web_embedded;fetch_pot=always", "--extractor-args", bgutil_arg]
+        f, out_s = _run_yt_plan("WARP + BGUtil PO-Token (mweb/web, fetch_pot=always)", False, primary_args, True)
+        if f:
+            return f
+        for rot in (1, 2, 3):
+            if any(sig in out_s for sig in ("not a bot", "pass cookies", "Failed to extract any player response", "HTTP Error 403", "HTTP Error 429")):
+                report_progress(54, f"Rotating Cloudflare WARP tunnel for clean IP (attempt {rot}/3)...")
+                if rotate_warp_proxy(rot):
+                    f, out_s = _run_yt_plan(f"WARP Rotated #{rot} + BGUtil PO-Token (fetch_pot=always)", False, primary_args, True)
+                    if f:
+                        return f
+                else:
+                    break
+            else:
+                break
+
+    # Phase B: Secondary yt-dlp plans (on cleanest WARP IP + fast Direct fallbacks)
+    secondary_plans = []
+    if proxy:
+        secondary_plans.append(("WARP + BGUtil (tv_embedded/safari, fetch_pot=always)", False, ["--extractor-args", "youtube:player_client=tv_embedded,web_safari;fetch_pot=always", "--extractor-args", bgutil_arg], True, "12"))
+        if has_cookies:
+            secondary_plans.append(("WARP + BGUtil + Cookies", True, ["--extractor-args", "youtube:player_client=web,mweb;fetch_pot=always", "--extractor-args", bgutil_arg], True, "12"))
+        secondary_plans.append(("WARP Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True, "10"))
+
+    secondary_plans.append(("Direct + BGUtil PO-Token (mweb/web, fetch_pot=always)", False, ["--extractor-args", "youtube:player_client=mweb,web,web_embedded;fetch_pot=always", "--extractor-args", bgutil_arg], False, "8"))
+    secondary_plans.append(("Direct + BGUtil PO-Token (tv_embedded/safari)", False, ["--extractor-args", "youtube:player_client=tv_embedded,web_safari;fetch_pot=always", "--extractor-args", bgutil_arg], False, "8"))
+
+    for plan_name, use_cookies, extra_args, use_proxy, sock_timeout in secondary_plans:
+        f, _ = _run_yt_plan(plan_name, use_cookies, extra_args, use_proxy, sock_timeout=sock_timeout)
+        if f:
+            return f
 
     # Fallback: Native pytubefix v11 engine (WEB/MWEB auto-PO-token + adaptive HD muxing)
     log("Invoking native pytubefix fallback engine (WEB/MWEB Auto-PO-Token + Adaptive Mux)...")
@@ -1513,11 +1508,6 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
                 log(f"pytubefix ({pt_client}, proxy={bool(pt_p)}) note: {ce}")
     except Exception as pfe:
         log(f"pytubefix engine note: {pfe}")
-
-    # Layer 3 Fallback: SaveTube External CDN API
-    st_file = download_youtube_savetube(url, output_dir, fmt, clean_id)
-    if st_file and st_file.exists() and st_file.stat().st_size > 1000:
-        return st_file
 
     return None
 
@@ -1863,11 +1853,11 @@ def download_spotify(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
     yt_query = f"ytsearch3:{query} audio"
     bgutil_arg = "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416"
     if proxy:
-        search_plans.append(("WARP BGUtil PO-Token YouTube Search", yt_query, False, ["--extractor-args", "youtube:player_client=mweb,web", "--extractor-args", bgutil_arg], True, True))
+        search_plans.append(("WARP BGUtil PO-Token YouTube Search", yt_query, False, ["--extractor-args", "youtube:player_client=mweb,web;fetch_pot=always", "--extractor-args", bgutil_arg], True, True))
         search_plans.append(("WARP YouTube Audio Search", yt_query, False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True, True))
         if has_cookies:
             search_plans.append(("WARP Authenticated YouTube Search", yt_query, True, ["--extractor-args", "youtube:player_client=default,-android,-ios"], True, True))
-    search_plans.append(("Direct BGUtil PO-Token YouTube Search", yt_query, False, ["--extractor-args", "youtube:player_client=mweb,web", "--extractor-args", bgutil_arg], False, True))
+    search_plans.append(("Direct BGUtil PO-Token YouTube Search", yt_query, False, ["--extractor-args", "youtube:player_client=mweb,web;fetch_pot=always", "--extractor-args", bgutil_arg], False, True))
     search_plans.append(("Direct YouTube Audio Search", yt_query, False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], False, True))
     if has_cookies:
         search_plans.append(("Direct Authenticated YouTube Search", yt_query, True, ["--extractor-args", "youtube:player_client=default,-android,-ios"], False, True))
