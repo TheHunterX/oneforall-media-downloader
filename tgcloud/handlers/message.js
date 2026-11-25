@@ -296,6 +296,16 @@ export default async function (event) {
       return;
     }
 
+    // Reject Telegram internal t.me / telegram.me links cleanly without booting a cloud VM
+    if (/^https?:\/\/(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)\//i.test(cleanUrl)) {
+      await api.sendMessage({
+        chat_id: chatId,
+        parse_mode: 'HTML',
+        text: t.invalidUrl
+      });
+      return;
+    }
+
     // -------------------------------------------------------------
     // 5. YouTube Platform: Fast oEmbed Metadata & Quality Selection
     // -------------------------------------------------------------

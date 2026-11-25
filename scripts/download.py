@@ -153,7 +153,29 @@ def resolve_redirect_url(url: str) -> str:
         except Exception as e:
             log(f"Facebook unshorten note: {e}")
 
-    # 4. TikTok short links (vt.tiktok.com, vm.tiktok.com, tiktok.com/t/) + Spotify (spotify.link, spoti.fi) + Reddit /s/ + v.redd.it + t.co + youtu.be + bit.ly
+    # 3.5. Reddit mobile /s/ share links & redd.it short links via vxreddit (zero 403 block!)
+    if ("reddit.com/" in url_l and "/s/" in url_l) or re.match(r'^https?://(?:www\.)?redd\.it/[a-z0-9]+', url_l):
+        try:
+            vx_check = re.sub(r'^https?://(?:www\.|old\.)?(?:reddit\.com|redd\.it)/', 'https://vxreddit.com/', url.split("?")[0], flags=re.IGNORECASE)
+            req_vx = urllib.request.Request(vx_check, headers={"User-Agent": "TelegramBot (like TwitterBot)"})
+            with urllib.request.urlopen(req_vx, timeout=12) as rv:
+                vx_html = rv.read().decode("utf-8", errors="replace")
+            if "redgifs.com" in vx_html.lower():
+                log("BLOCKED: Reddit mobile share link points to RedGIFs (+18 content).")
+                set_error_reason("nsfw", "⛔ <b>Restricted Content (+18):</b> Sorry, due to <b>Telegram's Terms of Service</b>, this bot is unable to download +18 / pornographic content.")
+                write_state("error", 0, "Blocked (+18 restricted content)")
+                sys.exit(1)
+            og_u = re.search(r'property="og:url"\s+content="(https://www\.reddit\.com/comments/[a-zA-Z0-9]+[^"]*)"', vx_html)
+            if og_u:
+                resolved_rd = og_u.group(1)
+                log(f"Unshortened Reddit /s/ link via vxreddit: {url} -> {resolved_rd}")
+                return resolved_rd
+        except SystemExit:
+            raise
+        except Exception as rse:
+            log(f"Reddit /s/ vxreddit unshorten note: {rse}")
+
+    # 4. TikTok short links (vt.tiktok.com, vm.tiktok.com, tiktok.com/t/) + Spotify (spotify.link, spoti.fi) + v.redd.it + t.co + youtu.be + bit.ly
     if any(short in url_l for short in ["vt.tiktok.com", "vm.tiktok.com", "tiktok.com/t/", "spotify.link", "spoti.fi", "pin.it", "t.co", "youtu.be", "bit.ly", "v.redd.it", "/s/"]):
         try:
             ua = GENERIC_CHROME_UA.split(" Chrome/1")[0] if "tiktok.com" in url_l else GENERIC_CHROME_UA
@@ -1670,6 +1692,18 @@ def download_reddit(url: str, output_dir: Path, fmt: str, proxy: Optional[str] =
         if not isinstance(arr, list) or not arr:
             return None
         post = arr[0]["data"]["children"][0]["data"]
+        if post.get("over_18") is True or "redgifs.com" in str(post.get("url") or "").lower():
+            log("BLOCKED: Reddit post marked over_18 (+18 NSFW).")
+            set_error_reason("nsfw", "⛔ <b>Restricted Content (+18):</b> Sorry, due to <b>Telegram's Terms of Service</b>, this bot is unable to download +18 / NSFW content.")
+            write_state("error", 0, "Blocked (+18 restricted content)")
+            sys.exit(1)
+        # Support SFW Reddit direct image posts (i.redd.it)
+        post_url = str(post.get("url_overridden_by_dest") or post.get("url") or "")
+        if not is_audio and re.search(r'https?://i\.redd\.it/[^?\s]+\.(?:jpg|jpeg|png|gif|webp)', post_url, re.I):
+            ext = post_url.split("?")[0].rsplit(".", 1)[-1].lower()
+            img_file = output_dir / f"{clean_id}_OneForAllHub.{ext}"
+            if download_stream_url(post_url, img_file, proxy=proxy) or download_stream_url(post_url, img_file, proxy=None):
+                return img_file
         rvid = (post.get("secure_media") or {}).get("reddit_video")
         if not rvid or not rvid.get("fallback_url"):
             return None
@@ -1721,6 +1755,11 @@ def download_reddit(url: str, output_dir: Path, fmt: str, proxy: Optional[str] =
         with urllib.request.urlopen(req, timeout=15) as r:
             page = r.read().decode("utf-8", errors="replace")
         vids = re.findall(r'property="og:video(?::secure_url)?"\s+content="([^"]+)"', page)
+        if "redgifs.com" in page.lower():
+            log("BLOCKED: Reddit post embeds RedGIFs (+18 NSFW).")
+            set_error_reason("nsfw", "⛔ <b>Restricted Content (+18):</b> Sorry, due to <b>Telegram's Terms of Service</b>, this bot is unable to download +18 / NSFW content.")
+            write_state("error", 0, "Blocked (+18 restricted content)")
+            sys.exit(1)
         if vids:
             vid_url = _html.unescape(vids[0])
             final_file = output_dir / f"{clean_id}_OneForAllHub.{'mp3' if is_audio else 'mp4'}"
@@ -1737,6 +1776,18 @@ def download_reddit(url: str, output_dir: Path, fmt: str, proxy: Optional[str] =
                 if final_file.exists() and final_file.stat().st_size > 1000:
                     log(f"Reddit Tier 2 (vxreddit) SUCCESS: {final_file.name} ({final_file.stat().st_size} bytes)")
                     return final_file
+        elif not is_audio:
+            imgs = re.findall(r'property="og:image"\s+content="([^"]+)"', page)
+            if imgs:
+                img_url = _html.unescape(imgs[0])
+                if "redd.it" in img_url:
+                    img_file = output_dir / f"{clean_id}_OneForAllHub.jpg"
+                    if download_stream_url(img_url, img_file, proxy=None) or (proxy and download_stream_url(img_url, img_file, proxy=proxy)):
+                        if img_file.exists() and img_file.stat().st_size > 1000:
+                            log(f"Reddit Tier 2 Image SUCCESS: {img_file.name}")
+                            return img_file
+    except SystemExit:
+        raise
     except Exception as vx_err:
         log(f"Reddit Tier 2 (vxreddit) note: {vx_err}")
     return None
@@ -2011,6 +2062,12 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: Optional
             f = get_latest_file(output_dir, prefer_video=not is_audio)
             if f and f.stat().st_size > 1000:
                 return f
+            if "Unsupported URL:" in out_str:
+                set_error_reason("unsupported", "")
+            elif any(k in out_str for k in ("HTTP Error 404", "Video unavailable", "has been removed", "does not exist")):
+                set_error_reason("unavailable", "")
+            elif any(k in out_str for k in ("Private video", "login required", "Sign in to view")):
+                set_error_reason("private", "")
         except Exception as e:
             log(f"General yt-dlp attempt {attempt+1} note: {e}")
     return get_latest_file(output_dir, prefer_video=not is_audio)
@@ -2110,15 +2167,27 @@ _ADULT_DOMAINS = {
     "coomer.party", "kemono.su", "thothub.to", "erome.com", "bunkr.si",
     "redgifs.com", "rule34.xxx", "e621.net", "nhentai.net", "hanime.tv",
     "motherless.com", "heavy-r.com", "sxyprn.com", "youjizz.com",
+    "leakedzone.com", "desiwood.online", "tokyomotion.net", "thisvid.com",
+    "porntube.com", "peekvids.com", "lobstertube.com",
     "porniran.com", "shahvani.com", "iraniansex.com", "superirani.com",
     "persianporn.com", "sekshot.com",
 }
 _ADULT_KEYWORDS = (
     "porn", "xnxx", "xvideos", "xhamster", "redtube", "youjizz", "spankbang",
     "hentai", "rule34", "chaturbate", "stripchat", "onlyfans", "fansly",
-    "redgifs", "erome", "brazzers", "xxx", "sexvid", "xvid", "javhd", "missav",
-    "eporner", "beeg", "motherless", "fapello", "thothub",
+    "redgif", "erome", "brazzers", "xxx", "sexvid", "xvid", "javhd", "missav",
+    "eporner", "beeg", "motherless", "fapello", "thothub", "leakedzone",
+    "camgirl", "livecam", "slut", "milf", "boobs", "pussy", "shemale", "bdsm",
 )
+_NSFW_SUBREDDIT_KEYWORDS = (
+    "nsfw", "porn", "redgif", "xxx", "hentai", "rule34", "gonewild", "realgirls",
+    "slut", "milf", "boobs", "booty", "cumslut", "pussy", "fuck", "nude",
+    "naked", "jerkoff", "onlyfans", "fansly", "thot", "shemale", "sissy",
+    "bdsm", "fetish", "yiff", "ecchi", "blowjob", "handjob", "gangbang",
+    "creampie", "escort",
+)
+_NSFW_EXACT_SUBS = {"sex", "ass", "anal", "cum", "dick", "cock", "tits", "boob", "fap", "leaks"}
+_ADULT_PATH_RE = re.compile(r"(?:^|[-_/])(?:porn|xxx|xnxx|xvideos|nude|naked|sexvideo|hentai|onlyfans|redgifs?|blowjob|handjob|gangbang|chudai|camgirl|brazzers|pussy|boobs)(?:[-_/]|$)", re.I)
 
 def is_nsfw_url(check_url: str) -> bool:
     try:
@@ -2130,7 +2199,11 @@ def is_nsfw_url(check_url: str) -> bool:
         if not host:
             return False
         if host == "reddit.com" or host.endswith(".reddit.com"):
-            return bool(re.search(r"/r/(?:nsfw|porn|gonewild|realgirls|hentai|rule34|sex|cumsluts|milf|boobs|ass|anal|blowjobs|nsfw_gif|nsfw_videos|iraniannsfw)(?:/|$)", path))
+            sm = re.match(r"^/r/([a-z0-9_]+)", path)
+            if sm:
+                sub_low = sm.group(1).lower()
+                return sub_low in _NSFW_EXACT_SUBS or any(kw in sub_low for kw in _NSFW_SUBREDDIT_KEYWORDS)
+            return False
         if any(host == s or host.endswith("." + s) for s in _SAFE_DOMAINS):
             return False
         if host.endswith((".xxx", ".porn", ".sex", ".adult")):
@@ -2138,6 +2211,8 @@ def is_nsfw_url(check_url: str) -> bool:
         if any(host == d or host.endswith("." + d) for d in _ADULT_DOMAINS):
             return True
         if any(kw in host for kw in _ADULT_KEYWORDS):
+            return True
+        if _ADULT_PATH_RE.search(path):
             return True
     except Exception:
         pass

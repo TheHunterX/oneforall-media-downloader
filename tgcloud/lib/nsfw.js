@@ -1,5 +1,5 @@
 /**
- * Comprehensive +18 / Porn / Adult Site URL Blocker
+ * Comprehensive +18 / Porn / Adult Site & Subreddit URL Blocker
  * Protects Telegram Bot, Mini App, Web UI, and Cloud Runner per Telegram Terms of Service.
  */
 
@@ -43,6 +43,8 @@ const ADULT_DOMAINS = new Set([
   'porn00.org', 'pornhd.com', 'fuq.com', 'gotporn.com', 'anyporn.com',
   '3movs.com', '4tube.com', 'fux.com', 'nuvid.com', 'slutload.com',
   'alphaporno.com', 'zbporn.com', 'analdin.com', 'youjizz.com', 'jizzbunker.com',
+  'leakedzone.com', 'desiwood.online', 'tokyomotion.net', 'thisvid.com',
+  'porntube.com', 'peekvids.com', 'lobstertube.com',
   'porniran.com', 'shahvani.com', 'iraniansex.com', 'superirani.com',
   'persianporn.com', 'sekshot.com'
 ]);
@@ -50,13 +52,25 @@ const ADULT_DOMAINS = new Set([
 const ADULT_HOST_KEYWORDS = [
   'porn', 'xnxx', 'xvideos', 'xhamster', 'redtube', 'youjizz', 'spankbang',
   'hentai', 'rule34', 'chaturbate', 'stripchat', 'onlyfans', 'fansly',
-  'redgifs', 'erome', 'brazzers', 'xxx', 'sexvid', 'xvid', 'javhd', 'missav',
-  'eporner', 'beeg', 'motherless', 'fapello', 'thothub'
+  'redgif', 'erome', 'brazzers', 'xxx', 'sexvid', 'xvid', 'javhd', 'missav',
+  'eporner', 'beeg', 'motherless', 'fapello', 'thothub', 'leakedzone',
+  'camgirl', 'livecam', 'slut', 'milf', 'boobs', 'pussy', 'shemale', 'bdsm'
 ];
 
 const ADULT_TLDS = ['.xxx', '.porn', '.sex', '.adult'];
 
-const NSFW_REDDIT_SUBS = /\/r\/(?:nsfw|porn|gonewild|realgirls|hentai|rule34|sex|cumsluts|milf|boobs|ass|anal|blowjobs|nsfw_gif|nsfw_videos|iraniannsfw)(?:\/|$|\?)/i;
+// Substring check on /r/<subreddit> name (catches r/RedGIFsTrans, r/NSFW_GIF, r/IranianNSFW, etc.)
+const NSFW_SUBREDDIT_KEYWORDS = [
+  'nsfw', 'porn', 'redgif', 'xxx', 'hentai', 'rule34', 'gonewild', 'realgirls',
+  'slut', 'milf', 'boobs', 'tiddies', 'booty', 'cumslut', 'pussy', 'fuck',
+  'nude', 'naked', 'jerkoff', 'onlyfans', 'fansly', 'thot', 'shemale',
+  'sissy', 'bdsm', 'fetish', 'yiff', 'ecchi', 'blowjob', 'handjob',
+  'gangbang', 'creampie', 'escort'
+];
+const NSFW_EXACT_SUBS = new Set(['sex', 'ass', 'anal', 'cum', 'dick', 'cock', 'tits', 'boob', 'fap', 'leaks']);
+
+// URL path token check for unknown websites/blogs (e.g. desiwood.online/...-full-nude-video/)
+const ADULT_PATH_REGEX = /(?:^|[-_/])(?:porn|xxx|xnxx|xvideos|nude|naked|sexvideo|hentai|onlyfans|redgifs?|blowjob|handjob|gangbang|chudai|camgirl|brazzers|pussy|boobs)(?:[-_/]|$)/i;
 
 export function isNsfwUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== 'string') return false;
@@ -74,9 +88,16 @@ export function isNsfwUrl(rawUrl) {
   }
   if (!host) return false;
 
-  // Check explicit NSFW subreddits on Reddit
+  // Check Reddit subreddit name for any NSFW/porn substring
   if (host === 'reddit.com' || host.endsWith('.reddit.com')) {
-    return NSFW_REDDIT_SUBS.test(pathname);
+    const subMatch = pathname.match(/^\/r\/([a-z0-9_]+)/i);
+    if (subMatch && subMatch[1]) {
+      const subLow = subMatch[1].toLowerCase();
+      if (NSFW_EXACT_SUBS.has(subLow) || NSFW_SUBREDDIT_KEYWORDS.some(kw => subLow.includes(kw))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // Allow verified mainstream platforms (e.g. x.com, youtube.com, instagram.com)
@@ -103,6 +124,11 @@ export function isNsfwUrl(rawUrl) {
     if (host.includes(kw)) {
       return true;
     }
+  }
+
+  // Path keyword check on non-whitelisted unknown blogs/sites
+  if (ADULT_PATH_REGEX.test(pathname)) {
+    return true;
   }
 
   return false;

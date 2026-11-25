@@ -1186,15 +1186,23 @@
                 const host = (u.hostname || '').toLowerCase().replace(/^www\./, '');
                 const path = (u.pathname || '').toLowerCase();
                 if (host === 'reddit.com' || host.endsWith('.reddit.com')) {
-                    return /\/r\/(?:nsfw|porn|gonewild|realgirls|hentai|rule34|sex|cumsluts|milf|boobs|ass|anal|blowjobs|nsfw_gif|nsfw_videos|iraniannsfw)(?:\/|$|\?)/i.test(path);
+                    const sm = path.match(/^\/r\/([a-z0-9_]+)/i);
+                    if (sm && sm[1]) {
+                        const sub = sm[1].toLowerCase();
+                        if (['sex','ass','anal','cum','dick','cock','tits','boob','fap','leaks'].includes(sub)) return true;
+                        const subKws = ['nsfw','porn','redgif','xxx','hentai','rule34','gonewild','realgirls','slut','milf','boobs','booty','cumslut','pussy','fuck','nude','naked','jerkoff','onlyfans','fansly','thot','shemale','sissy','bdsm','fetish','yiff','ecchi','blowjob','handjob','gangbang','creampie','escort'];
+                        return subKws.some(k => sub.includes(k));
+                    }
+                    return false;
                 }
                 const safe = ['youtube.com','youtu.be','instagram.com','ddinstagram.com','tiktok.com','twitter.com','x.com','fxtwitter.com','vxtwitter.com','fixvx.com','spotify.com','spotify.link','spoti.fi','pinterest.com','pin.it','soundcloud.com','facebook.com','fb.watch','vimeo.com','twitch.tv','dailymotion.com','threads.net','bsky.app','aparat.com','bilibili.com'];
                 if (safe.some(s => host === s || host.endsWith('.' + s))) return false;
                 if (['.xxx','.porn','.sex','.adult'].some(t => host.endsWith(t))) return true;
-                const doms = ['pornhub.com','redtube.com','youporn.com','tube8.com','xtube.com','spankbang.com','xvideos.com','xnxx.com','xhamster.com','eporner.com','hqporner.com','beeg.com','tnaflix.com','txxx.com','upornia.com','missav.com','jable.tv','brazzers.com','realitykings.com','bangbros.com','chaturbate.com','stripchat.com','bongacams.com','cam4.com','livejasmin.com','onlyfans.com','fansly.com','manyvids.com','fapello.com','coomer.su','coomer.party','kemono.su','thothub.to','erome.com','bunkr.si','redgifs.com','rule34.xxx','e621.net','nhentai.net','hanime.tv','motherless.com','heavy-r.com','sxyprn.com','youjizz.com','porniran.com','shahvani.com','superirani.com'];
+                const doms = ['pornhub.com','redtube.com','youporn.com','tube8.com','xtube.com','spankbang.com','xvideos.com','xnxx.com','xhamster.com','eporner.com','hqporner.com','beeg.com','tnaflix.com','txxx.com','upornia.com','missav.com','jable.tv','brazzers.com','realitykings.com','bangbros.com','chaturbate.com','stripchat.com','bongacams.com','cam4.com','livejasmin.com','onlyfans.com','fansly.com','manyvids.com','fapello.com','coomer.su','coomer.party','kemono.su','thothub.to','erome.com','bunkr.si','redgifs.com','rule34.xxx','e621.net','nhentai.net','hanime.tv','motherless.com','heavy-r.com','sxyprn.com','youjizz.com','leakedzone.com','desiwood.online','tokyomotion.net','thisvid.com','porniran.com','shahvani.com','superirani.com'];
                 if (doms.some(d => host === d || host.endsWith('.' + d))) return true;
-                const kws = ['porn','xnxx','xvideos','xhamster','redtube','youjizz','spankbang','hentai','rule34','chaturbate','stripchat','onlyfans','fansly','redgifs','erome','brazzers','xxx','sexvid','xvid','javhd','missav','eporner','beeg','motherless','fapello','thothub'];
-                return kws.some(k => host.includes(k));
+                const kws = ['porn','xnxx','xvideos','xhamster','redtube','youjizz','spankbang','hentai','rule34','chaturbate','stripchat','onlyfans','fansly','redgif','erome','brazzers','xxx','sexvid','xvid','javhd','missav','eporner','beeg','motherless','fapello','thothub','leakedzone','camgirl','slut','milf','boobs','pussy','shemale','bdsm'];
+                if (kws.some(k => host.includes(k))) return true;
+                return /(?:^|[-_/])(?:porn|xxx|xnxx|xvideos|nude|naked|sexvideo|hentai|onlyfans|redgifs?|blowjob|handjob|gangbang|chudai|camgirl|brazzers|pussy|boobs)(?:[-_/]|$)/i.test(path);
             } catch (_) {
                 return false;
             }
