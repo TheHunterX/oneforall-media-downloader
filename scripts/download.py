@@ -2064,6 +2064,8 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: Optional
                 return f
             if "Unsupported URL:" in out_str:
                 set_error_reason("unsupported", "")
+            elif "GeoRestrictedError" in out_str or "not made this video available in your country" in out_str:
+                set_error_reason("geo", "")
             elif any(k in out_str for k in ("HTTP Error 404", "Video unavailable", "has been removed", "does not exist")):
                 set_error_reason("unavailable", "")
             elif any(k in out_str for k in ("Private video", "login required", "Sign in to view")):
@@ -2151,7 +2153,7 @@ _SAFE_DOMAINS = (
     "twitter.com", "x.com", "fxtwitter.com", "vxtwitter.com", "fixvx.com",
     "spotify.com", "spotify.link", "spoti.fi", "pinterest.com", "pin.it",
     "soundcloud.com", "facebook.com", "fb.watch", "vimeo.com", "twitch.tv",
-    "dailymotion.com", "threads.net", "bsky.app", "aparat.com", "bilibili.com",
+    "dailymotion.com", "threads.net", "threads.com", "bsky.app", "aparat.com", "bilibili.com",
 )
 _ADULT_DOMAINS = {
     "pornhub.com", "pornhubpremium.com", "thumbzilla.com", "redtube.com", "youporn.com",
@@ -2169,6 +2171,7 @@ _ADULT_DOMAINS = {
     "motherless.com", "heavy-r.com", "sxyprn.com", "youjizz.com",
     "leakedzone.com", "desiwood.online", "tokyomotion.net", "thisvid.com",
     "porntube.com", "peekvids.com", "lobstertube.com",
+    "pimpbunny.com", "tranny.one", "tsplayground.com", "grooby.com",
     "porniran.com", "shahvani.com", "iraniansex.com", "superirani.com",
     "persianporn.com", "sekshot.com",
 }
@@ -2177,7 +2180,8 @@ _ADULT_KEYWORDS = (
     "hentai", "rule34", "chaturbate", "stripchat", "onlyfans", "fansly",
     "redgif", "erome", "brazzers", "xxx", "sexvid", "xvid", "javhd", "missav",
     "eporner", "beeg", "motherless", "fapello", "thothub", "leakedzone",
-    "camgirl", "livecam", "slut", "milf", "boobs", "pussy", "shemale", "bdsm",
+    "pimpbunny", "tranny", "camgirl", "livecam", "slut", "milf", "boobs",
+    "pussy", "shemale", "bdsm",
 )
 _NSFW_SUBREDDIT_KEYWORDS = (
     "nsfw", "porn", "redgif", "xxx", "hentai", "rule34", "gonewild", "realgirls",

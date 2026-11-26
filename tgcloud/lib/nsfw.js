@@ -13,7 +13,7 @@ const SAFE_DOMAINS = [
   'soundcloud.com',
   'facebook.com', 'fb.watch',
   'vimeo.com', 'twitch.tv', 'dailymotion.com',
-  'threads.net', 'bsky.app', 'aparat.com', 'bilibili.com'
+  'threads.net', 'threads.com', 'bsky.app', 'aparat.com', 'bilibili.com'
 ];
 
 const ADULT_DOMAINS = new Set([
@@ -45,6 +45,7 @@ const ADULT_DOMAINS = new Set([
   'alphaporno.com', 'zbporn.com', 'analdin.com', 'youjizz.com', 'jizzbunker.com',
   'leakedzone.com', 'desiwood.online', 'tokyomotion.net', 'thisvid.com',
   'porntube.com', 'peekvids.com', 'lobstertube.com',
+  'pimpbunny.com', 'tranny.one', 'tsplayground.com', 'grooby.com',
   'porniran.com', 'shahvani.com', 'iraniansex.com', 'superirani.com',
   'persianporn.com', 'sekshot.com'
 ]);
@@ -54,7 +55,8 @@ const ADULT_HOST_KEYWORDS = [
   'hentai', 'rule34', 'chaturbate', 'stripchat', 'onlyfans', 'fansly',
   'redgif', 'erome', 'brazzers', 'xxx', 'sexvid', 'xvid', 'javhd', 'missav',
   'eporner', 'beeg', 'motherless', 'fapello', 'thothub', 'leakedzone',
-  'camgirl', 'livecam', 'slut', 'milf', 'boobs', 'pussy', 'shemale', 'bdsm'
+  'pimpbunny', 'tranny', 'camgirl', 'livecam', 'slut', 'milf', 'boobs',
+  'pussy', 'shemale', 'bdsm'
 ];
 
 const ADULT_TLDS = ['.xxx', '.porn', '.sex', '.adult'];

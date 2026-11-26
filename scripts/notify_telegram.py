@@ -107,6 +107,8 @@ export default async function(args) {
         reasonLine = "⛔ <b>Restricted Content (+18):</b> Sorry, due to <b>Telegram's Terms of Service</b>, this bot is unable to process or download +18 / pornographic content.";
     } else if (args.err_code === 'unsupported') {
         reasonLine = '🌐 <b>Unsupported Website:</b> Sorry, this website is not supported. Please send a valid media link from YouTube, Instagram, Spotify, TikTok, Twitter/X, Pinterest, SoundCloud, Reddit, Facebook, or supported video platforms.';
+    } else if (args.err_code === 'geo') {
+        reasonLine = '🌍 <b>Geo-Restricted Video:</b> The uploader has blocked this video in the cloud server region, so it cannot be downloaded from here.';
     } else if (args.err_code === 'unavailable') {
         reasonLine = '🗑️ <b>Unavailable Media:</b> This post or video has been deleted or removed by the creator.';
     } else if (args.err_detail) {
@@ -114,7 +116,7 @@ export default async function(args) {
     }
 
     const isNsfwBlock = args.err_code === 'nsfw';
-    const hideAdminReport = ['nsfw', 'unsupported', 'private', 'unavailable'].includes(args.err_code);
+    const hideAdminReport = ['nsfw', 'unsupported', 'private', 'unavailable', 'geo'].includes(args.err_code);
     const errKey = 'err_' + Math.random().toString(36).substring(2, 10);
     if (!hideAdminReport) {
         try {
