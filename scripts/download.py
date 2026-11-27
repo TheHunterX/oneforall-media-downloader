@@ -1294,16 +1294,18 @@ def download_instagram(url: str, output_dir: Path, fmt: str, proxy: Optional[str
 # =====================================================================
 # 4. YouTube Engine (Auto WARP IP Rotation + BGUtil PO-Token + pytubefix WEB)
 # =====================================================================
-def rotate_warp_proxy(attempt: int = 1) -> bool:
-    """Rotate Cloudflare WARP exit IP by creating a fresh wgcf/wireproxy tunnel on 127.0.0.1:8080."""
+def rotate_warp_proxy(attempt: int = 1) -> Optional[str]:
+    """Spin up a fresh wgcf/wireproxy tunnel on an isolated port (8081+) WITHOUT killing the active tunnel first."""
     if os.name == "nt" or not Path("/usr/local/bin/wireproxy").exists():
-        return False
-    endpoints = ["162.159.193.1:2408", "188.114.96.1:2408", "162.159.195.1:2408", "188.114.98.1:2408"]
+        return None
+    endpoints = ["162.159.192.1:2408", "162.159.193.1:2408", "162.159.192.2:2408"]
     ep = endpoints[(attempt - 1) % len(endpoints)]
+    new_http_port = 8080 + attempt
+    new_socks_port = 1080 + attempt
+    new_proxy = f"http://127.0.0.1:{new_http_port}"
     try:
         rot_dir = Path(f"/tmp/warp_rot_{attempt}")
         rot_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["pkill", "-9", "-f", "wireproxy"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         clean_env = {k: v for k, v in os.environ.items() if not k.lower().endswith("proxy")}
 
         if Path("/usr/local/bin/wgcf").exists():
@@ -1311,10 +1313,8 @@ def rotate_warp_proxy(attempt: int = 1) -> bool:
             subprocess.run(["/usr/local/bin/wgcf", "generate"], cwd=str(rot_dir), env=clean_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
 
         prof = rot_dir / "wgcf-profile.conf"
-        if not prof.exists() and Path("wgcf-profile.conf").exists():
-            shutil.copy2("wgcf-profile.conf", prof)
         if not prof.exists():
-            return False
+            return None
 
         updated_prof = re.sub(r'(?m)^Endpoint\s*=.*$', f'Endpoint = {ep}', prof.read_text(encoding='utf-8'))
         prof.write_text(updated_prof, encoding='utf-8')
@@ -1323,22 +1323,22 @@ def rotate_warp_proxy(attempt: int = 1) -> bool:
         wp_conf.write_text(
             f"WGConfig = {prof}\n\n"
             "[Socks5]\n"
-            "BindAddress = 127.0.0.1:1080\n\n"
+            f"BindAddress = 127.0.0.1:{new_socks_port}\n\n"
             "[HTTP]\n"
-            "BindAddress = 127.0.0.1:8080\n",
+            f"BindAddress = 127.0.0.1:{new_http_port}\n",
             encoding="utf-8"
         )
-        subprocess.Popen(
+        proc = subprocess.Popen(
             ["/usr/local/bin/wireproxy", "-c", str(wp_conf)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
             env=clean_env
         )
-        for _ in range(5):
+        for _ in range(6):
             time.sleep(1)
             res = subprocess.run(
-                ["curl", "-fsS", "--connect-timeout", "2", "--max-time", "3", "--proxy", "http://127.0.0.1:8080", "https://www.cloudflare.com/cdn-cgi/trace"],
+                ["curl", "-fsS", "--connect-timeout", "2", "--max-time", "3", "--proxy", new_proxy, "https://www.cloudflare.com/cdn-cgi/trace"],
                 capture_output=True,
                 text=True,
                 env=clean_env,
@@ -1346,11 +1346,15 @@ def rotate_warp_proxy(attempt: int = 1) -> bool:
             )
             if res.returncode == 0 and "warp=on" in res.stdout:
                 ip_line = next((l.strip() for l in res.stdout.splitlines() if l.startswith("ip=")), "ip=rotated")
-                log(f"WARP IP rotation #{attempt} READY (endpoint={ep}, exit_{ip_line})!")
-                return True
+                log(f"WARP IP rotation #{attempt} READY on {new_proxy} (endpoint={ep}, exit_{ip_line})!")
+                return new_proxy
+        try:
+            proc.kill()
+        except Exception:
+            pass
     except Exception as re_err:
         log(f"WARP rotation #{attempt} note: {re_err}")
-    return False
+    return None
 
 def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] = None) -> Optional[Path]:
     """
@@ -1446,7 +1450,13 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
         for rot in (1, 2, 3):
             if any(sig in out_s for sig in rot_triggers) or not out_s:
                 report_progress(54, f"Rotating Cloudflare WARP tunnel for clean IP (attempt {rot}/3)...")
-                if rotate_warp_proxy(rot):
+                new_proxy = rotate_warp_proxy(rot)
+                if new_proxy:
+                    proxy = new_proxy
+                    env_with_proxy["HTTP_PROXY"] = proxy
+                    env_with_proxy["HTTPS_PROXY"] = proxy
+                    env_with_proxy["http_proxy"] = proxy
+                    env_with_proxy["https_proxy"] = proxy
                     f, out_s = _run_yt_plan(f"WARP Rotated #{rot} + BGUtil PO-Token (fetch_pot=always)", False, primary_args, True, sock_timeout="8", proc_timeout=120)
                     if f:
                         return f
