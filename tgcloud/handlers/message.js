@@ -63,9 +63,10 @@ function sanitizeUrl(rawUrl) {
   if (!rawUrl) return rawUrl;
   let trimmed = rawUrl.trim();
 
-  // Normalize Cobalt alt domains
+  // Normalize Cobalt alt domains & Threads (.com -> .net)
   trimmed = trimmed.replace(/^https?:\/\/(?:[dg]\.)?ddinstagram\.com\//i, 'https://www.instagram.com/');
   trimmed = trimmed.replace(/^https?:\/\/(?:www\.)?(?:vxtwitter|fixvx|fxtwitter)\.com\//i, 'https://x.com/');
+  trimmed = trimmed.replace(/^https?:\/\/(?:www\.)?threads\.com\//i, 'https://www.threads.net/');
 
   // 1. YouTube: Extract pure video ID (including /live/, /shorts/, /embed/, youtu.be)
   if (trimmed.includes('youtube.com') || trimmed.includes('youtu.be')) {
