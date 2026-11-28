@@ -45,7 +45,7 @@ const ADULT_DOMAINS = new Set([
   'alphaporno.com', 'zbporn.com', 'analdin.com', 'youjizz.com', 'jizzbunker.com',
   'leakedzone.com', 'desiwood.online', 'tokyomotion.net', 'thisvid.com',
   'porntube.com', 'peekvids.com', 'lobstertube.com',
-  'pimpbunny.com', 'tranny.one', 'tsplayground.com', 'grooby.com',
+  'pimpbunny.com', 'tranny.one', 'tsplayground.com', 'grooby.com', 'nikalarab.com',
   'porniran.com', 'shahvani.com', 'iraniansex.com', 'superirani.com',
   'persianporn.com', 'sekshot.com'
 ]);
@@ -56,7 +56,7 @@ const ADULT_HOST_KEYWORDS = [
   'redgif', 'erome', 'brazzers', 'xxx', 'sexvid', 'xvid', 'javhd', 'missav',
   'eporner', 'beeg', 'motherless', 'fapello', 'thothub', 'leakedzone',
   'pimpbunny', 'tranny', 'camgirl', 'livecam', 'slut', 'milf', 'boobs',
-  'pussy', 'shemale', 'bdsm'
+  'pussy', 'shemale', 'bdsm', 'nikalarab'
 ];
 
 const ADULT_TLDS = ['.xxx', '.porn', '.sex', '.adult'];
@@ -71,8 +71,8 @@ const NSFW_SUBREDDIT_KEYWORDS = [
 ];
 const NSFW_EXACT_SUBS = new Set(['sex', 'ass', 'anal', 'cum', 'dick', 'cock', 'tits', 'boob', 'fap', 'leaks']);
 
-// URL path token check for unknown websites/blogs (e.g. desiwood.online/...-full-nude-video/)
-const ADULT_PATH_REGEX = /(?:^|[-_/])(?:porn|xxx|xnxx|xvideos|nude|naked|sexvideo|hentai|onlyfans|redgifs?|blowjob|handjob|gangbang|chudai|camgirl|brazzers|pussy|boobs)(?:[-_/]|$)/i;
+// URL path token check for unknown websites/blogs (including Arabic/Persian URL-decoded slugs)
+const ADULT_PATH_REGEX = /(?:^|[-_/])(?:porn|xxx|xnxx|xvideos|nude|naked|sexvideo|hentai|onlyfans|redgifs?|blowjob|handjob|gangbang|chudai|camgirl|brazzers|pussy|boobs|سكس|سكسي|سکس|سکسی|ميلف|كسم|كسها|نودز)(?:[-_/]|$)/i;
 
 export function isNsfwUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== 'string') return false;
@@ -88,6 +88,9 @@ export function isNsfwUrl(rawUrl) {
     host = (m[1] || '').toLowerCase().replace(/^www\./, '');
     pathname = (m[2] || '').toLowerCase();
   }
+  try {
+    pathname = decodeURIComponent(pathname).toLowerCase();
+  } catch (_) {}
   if (!host) return false;
 
   // Check Reddit subreddit name for any NSFW/porn substring

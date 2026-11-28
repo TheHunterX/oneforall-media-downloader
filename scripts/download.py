@@ -41,6 +41,7 @@ def write_state(status: str, percent: int = 0, text: str = "", remaining: int = 
 
 def set_error_reason(code: str, detail: str):
     """Record a specific Cobalt-style error reason (private, age, unavailable) for user notification."""
+    log(f"Recorded error reason [{code}]: {detail}")
     try:
         err_file = os.environ.get("DL_ERROR_FILE", "/tmp/dl_error_reason.txt")
         Path(err_file).write_text(f"{code}|{detail}", encoding="utf-8")
@@ -297,8 +298,8 @@ def check_warp_proxy() -> Optional[str]:
             pass
     return None
 
-def run_ytdlp_with_progress(cmd: list, env: dict, timeout: int = 40, stage_label: str = "Downloading stream") -> tuple[int, str]:
-    """Execute yt-dlp while streaming stdout in real time with non-blocking queue to capture live byte progress and speeds without hangs."""
+def run_ytdlp_with_progress(cmd: list, env: dict, timeout: int = 40, stage_label: str = "Downloading stream", max_timeout: Optional[int] = None) -> tuple[int, str]:
+    """Execute yt-dlp with separate extraction/stall timeout and active-download ceiling so fast large files are never killed mid-stream."""
     log(f"Executing: {' '.join(cmd[:6])}...")
     proc = subprocess.Popen(
         cmd,
@@ -311,7 +312,10 @@ def run_ytdlp_with_progress(cmd: list, env: dict, timeout: int = 40, stage_label
     )
     output_lines = []
     start_time = time.time()
+    last_activity = start_time
     last_update = 0
+    started_download = False
+    hard_cap = max_timeout if max_timeout is not None else max(timeout, 420)
 
     out_q = queue.Queue()
     def enqueue_output(out, q):
@@ -332,8 +336,12 @@ def run_ytdlp_with_progress(cmd: list, env: dict, timeout: int = 40, stage_label
             try:
                 line = out_q.get(timeout=0.3)
                 output_lines.append(line)
+                last_activity = time.time()
+                if "[Merger]" in line or "[ExtractAudio]" in line or "[Fixup" in line or "Destination:" in line:
+                    started_download = True
                 m = re.search(r'\[download\]\s+([\d\.]+)%\s+of\s+~?([\d\.]+\w+)(?:\s+at\s+([\d\.]+\w+/s))?(?:\s+ETA\s+(\S+))?', line)
                 if m:
+                    started_download = True
                     now = time.time()
                     if now - last_update >= 0.8:
                         last_update = now
@@ -352,14 +360,22 @@ def run_ytdlp_with_progress(cmd: list, env: dict, timeout: int = 40, stage_label
                 pass
 
             if proc.poll() is not None:
-                # Drain remaining output lines
                 while not out_q.empty():
                     output_lines.append(out_q.get_nowait())
                 break
 
-            if time.time() - start_time > timeout:
+            now = time.time()
+            if not started_download and (now - start_time > timeout):
                 proc.kill()
-                log(f"Process timed out after {timeout}s!")
+                log(f"Process extraction timed out after {timeout}s!")
+                break
+            if started_download and (now - last_activity > 45):
+                proc.kill()
+                log("Process stalled mid-download for 45s!")
+                break
+            if now - start_time > hard_cap:
+                proc.kill()
+                log(f"Process exceeded max runtime cap ({hard_cap}s)!")
                 break
 
         return proc.returncode if proc.returncode is not None else -1, "".join(output_lines)
@@ -451,8 +467,10 @@ def get_latest_file(output_dir: Path, min_size: int = 1000, prefer_video: bool =
     files = list(output_dir.glob("*"))
     valid = [
         f for f in files
-        if f.is_file() and not f.name.endswith(".part") and not f.name.endswith(".ytdl")
-        and not f.name.startswith("temp_") and f.stat().st_size > min_size
+        if f.is_file()
+        and not (f.name.endswith(".part") or ".part-" in f.name or f.name.endswith(".ytdl"))
+        and not f.name.startswith("temp_")
+        and f.stat().st_size > min_size
     ]
     if not valid:
         return None
@@ -1294,11 +1312,29 @@ def download_instagram(url: str, output_dir: Path, fmt: str, proxy: Optional[str
 # =====================================================================
 # 4. YouTube Engine (Auto WARP IP Rotation + BGUtil PO-Token + pytubefix WEB)
 # =====================================================================
+def _verify_warp_youtube(proxy_url: str) -> bool:
+    """Verify a WARP proxy tunnel has live end-to-end YouTube connectivity (not just Cloudflare edge)."""
+    if not proxy_url:
+        return False
+    clean_env = {k: v for k, v in os.environ.items() if not k.lower().endswith("proxy")}
+    try:
+        res = subprocess.run(
+            ["curl", "-fsS", "--connect-timeout", "2", "--max-time", "4", "--proxy", proxy_url, "-o", "/dev/null", "-w", "%{http_code}", "https://www.youtube.com/generate_204"],
+            capture_output=True,
+            text=True,
+            env=clean_env,
+            timeout=6
+        )
+        return res.returncode == 0 and res.stdout.strip() in ("200", "204", "301", "302")
+    except Exception:
+        return False
+
 def rotate_warp_proxy(attempt: int = 1) -> Optional[str]:
     """Spin up a fresh wgcf/wireproxy tunnel on an isolated port (8081+) WITHOUT killing the active tunnel first."""
     if os.name == "nt" or not Path("/usr/local/bin/wireproxy").exists():
         return None
-    endpoints = ["162.159.192.1:2408", "162.159.193.1:2408", "162.159.192.2:2408"]
+    # Cycle through alternate Cloudflare WARP anycast endpoints (different from primary 192.1)
+    endpoints = ["162.159.193.1:2408", "162.159.192.2:2408", "162.159.195.1:2408", "162.159.192.1:2408"]
     ep = endpoints[(attempt - 1) % len(endpoints)]
     new_http_port = 8080 + attempt
     new_socks_port = 1080 + attempt
@@ -1314,9 +1350,18 @@ def rotate_warp_proxy(attempt: int = 1) -> Optional[str]:
 
         prof = rot_dir / "wgcf-profile.conf"
         if not prof.exists():
-            return None
+            fallback_prof = Path("wgcf-profile.conf")
+            if fallback_prof.exists():
+                shutil.copy2(fallback_prof, prof)
+            else:
+                return None
 
-        updated_prof = re.sub(r'(?m)^Endpoint\s*=.*$', f'Endpoint = {ep}', prof.read_text(encoding='utf-8'))
+        prof_txt = prof.read_text(encoding='utf-8')
+        updated_prof = re.sub(r'(?m)^Endpoint\s*=.*$', f'Endpoint = {ep}', prof_txt)
+        if re.search(r'(?m)^MTU\s*=', updated_prof):
+            updated_prof = re.sub(r'(?m)^MTU\s*=.*$', 'MTU = 1280', updated_prof)
+        else:
+            updated_prof = updated_prof.replace('[Interface]', '[Interface]\nMTU = 1280', 1)
         prof.write_text(updated_prof, encoding='utf-8')
 
         wp_conf = rot_dir / "wireproxy.conf"
@@ -1335,8 +1380,8 @@ def rotate_warp_proxy(attempt: int = 1) -> Optional[str]:
             start_new_session=True,
             env=clean_env
         )
-        for _ in range(6):
-            time.sleep(1)
+        for _ in range(5):
+            time.sleep(0.8)
             res = subprocess.run(
                 ["curl", "-fsS", "--connect-timeout", "2", "--max-time", "3", "--proxy", new_proxy, "https://www.cloudflare.com/cdn-cgi/trace"],
                 capture_output=True,
@@ -1346,8 +1391,11 @@ def rotate_warp_proxy(attempt: int = 1) -> Optional[str]:
             )
             if res.returncode == 0 and "warp=on" in res.stdout:
                 ip_line = next((l.strip() for l in res.stdout.splitlines() if l.startswith("ip=")), "ip=rotated")
-                log(f"WARP IP rotation #{attempt} READY on {new_proxy} (endpoint={ep}, exit_{ip_line})!")
-                return new_proxy
+                if _verify_warp_youtube(new_proxy):
+                    log(f"WARP IP rotation #{attempt} READY on {new_proxy} (endpoint={ep}, exit_{ip_line})!")
+                    return new_proxy
+                log(f"WARP rotation #{attempt} connected edge (endpoint={ep}) but YouTube timed out; trying next endpoint...")
+                break
         try:
             proc.kill()
         except Exception:
@@ -1360,7 +1408,7 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
     """
     Rock-solid multi-strategy YouTube engine supporting 1080p, 720p, 480p, 360p and 192k MP3.
     Bypasses YouTube SABR-only streaming experiment and datacenter bot checks with isolated cookie copies,
-    WARP + Cookies, VisionOS/Android client rotation, and proxy-aware pytubefix fallback.
+    non-destructive WARP endpoint rotation, BGUtil PO-Token, VisionOS/Android clients, and pytubefix fallback.
     """
     clean_id = extract_media_id(url)
     report_progress(50, "Connecting to YouTube & extracting streams...")
@@ -1369,15 +1417,16 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
     final_output_file = output_dir / f"{clean_id}_OneForAllHub.{target_ext}"
 
     env_with_proxy = {**os.environ}
-    if proxy:
-        env_with_proxy["HTTP_PROXY"] = proxy
-        env_with_proxy["HTTPS_PROXY"] = proxy
-        env_with_proxy["http_proxy"] = proxy
-        env_with_proxy["https_proxy"] = proxy
-        env_with_proxy["NO_PROXY"] = "127.0.0.1,localhost"
-        env_with_proxy["no_proxy"] = "127.0.0.1,localhost"
+    def _set_proxy_env(p: Optional[str]):
+        if p:
+            env_with_proxy["HTTP_PROXY"] = p
+            env_with_proxy["HTTPS_PROXY"] = p
+            env_with_proxy["http_proxy"] = p
+            env_with_proxy["https_proxy"] = p
+            env_with_proxy["NO_PROXY"] = "127.0.0.1,localhost"
+            env_with_proxy["no_proxy"] = "127.0.0.1,localhost"
+    _set_proxy_env(proxy)
 
-    # Select height cap and format filter
     if fmt == "video-1080p":
         v_filter = "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b/18/best"
     elif fmt == "video-720p":
@@ -1392,11 +1441,26 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
         v_filter = "bv*+ba/b/18/best"
 
     has_cookies = _find_master_cookies_file() is not None
-
-    # Tuple format helper + Phase A (WARP + BGUtil fetch_pot=always with automatic WARP IP rotation)
     bgutil_arg = "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416"
 
-    def _run_yt_plan(plan_name: str, use_cookies: bool, extra_args: list, use_proxy: bool, sock_timeout: str = "8", proc_timeout: int = 120):
+    diag = {"geo": "", "age": False, "private": False, "geo_direct": False, "geo_warp": False}
+
+    def _scan_yt_errors(txt: str, was_proxy: bool = False):
+        if not txt:
+            return
+        if "GeoRestrictedError" in txt or "not made this video available in your country" in txt:
+            cm = re.search(r'This video is available in ([^\n.]+)', txt)
+            diag["geo"] = cm.group(1).strip() if cm else (diag["geo"] or "specific restricted countries")
+            if was_proxy:
+                diag["geo_warp"] = True
+            else:
+                diag["geo_direct"] = True
+        if any(k in txt for k in ("Sign in to confirm your age", "is age restricted", "inappropriate for some users", "age-restricted")):
+            diag["age"] = True
+        if any(k in txt for k in ("Private video", "Join this channel to get access", "members-only")):
+            diag["private"] = True
+
+    def _run_yt_plan(plan_name: str, use_cookies: bool, extra_args: list, use_proxy: bool, sock_timeout: str = "6", proc_timeout: int = 35):
         log(f"YouTube Engine trying: {plan_name} (proxy={use_proxy}, cookies={use_cookies})...")
         report_progress(53, f"Fetching YouTube stream ({plan_name})...")
         c_args = get_cookie_args(url) if use_cookies else []
@@ -1430,8 +1494,9 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
         cmd.append(url)
         out_str = ""
         try:
-            code, out_str = run_ytdlp_with_progress(cmd, plan_env, timeout=proc_timeout, stage_label="Downloading YouTube stream")
+            _, out_str = run_ytdlp_with_progress(cmd, plan_env, timeout=proc_timeout, stage_label="Downloading YouTube stream", max_timeout=420)
             log(f"Plan output summary: {out_str[-250:]}")
+            _scan_yt_errors(out_str, was_proxy=bool(use_proxy and proxy))
             f = get_latest_file(output_dir, prefer_video=not is_audio)
             if f and f.stat().st_size > 1000:
                 log(f"SUCCESS with {plan_name}: {f.name} ({f.stat().st_size} bytes)")
@@ -1440,115 +1505,151 @@ def download_youtube(url: str, output_dir: Path, fmt: str, proxy: Optional[str] 
             log(f"Plan {plan_name} note: {pe}")
         return None, out_str
 
+    # Preflight check primary WARP YouTube connectivity in <4s before risking 35-65s hangs
+    warp_healthy = False
+    rot_tried = set()
+    if proxy:
+        warp_healthy = _verify_warp_youtube(proxy)
+        if not warp_healthy:
+            log("Primary WARP tunnel cannot reach youtube.com/generate_204; rotating WARP endpoint immediately...")
+            for rot in (1, 2, 3):
+                rot_tried.add(rot)
+                new_proxy = rotate_warp_proxy(rot)
+                if new_proxy:
+                    proxy = new_proxy
+                    _set_proxy_env(proxy)
+                    warp_healthy = True
+                    break
+
     # Phase A: Primary WARP + BGUtil PO-Token (fetch_pot=always) with up to 3 automatic WARP IP rotations
     rot_triggers = ("not a bot", "pass cookies", "Sign in", "Failed to extract", "HTTP Error 403", "HTTP Error 429", "timed out", "TransportError", "Remote end closed", "Unable to download")
-    if proxy:
+    if proxy and warp_healthy:
         primary_args = ["--extractor-args", "youtube:player_client=mweb,web,web_embedded;fetch_pot=always", "--extractor-args", bgutil_arg]
-        f, out_s = _run_yt_plan("WARP + BGUtil PO-Token (mweb/web, fetch_pot=always)", False, primary_args, True, sock_timeout="8", proc_timeout=120)
+        f, out_s = _run_yt_plan("WARP + BGUtil PO-Token (mweb/web, fetch_pot=always)", False, primary_args, True, sock_timeout="6", proc_timeout=35)
         if f:
             return f
-        for rot in (1, 2, 3):
-            if any(sig in out_s for sig in rot_triggers) or not out_s:
+        if not diag["geo_warp"] and (any(sig in out_s for sig in rot_triggers) or not out_s):
+            if "timed out" in out_s or not out_s:
+                warp_healthy = False
+            for rot in (1, 2, 3):
+                if rot in rot_tried:
+                    continue
+                rot_tried.add(rot)
                 report_progress(54, f"Rotating Cloudflare WARP tunnel for clean IP (attempt {rot}/3)...")
                 new_proxy = rotate_warp_proxy(rot)
                 if new_proxy:
                     proxy = new_proxy
-                    env_with_proxy["HTTP_PROXY"] = proxy
-                    env_with_proxy["HTTPS_PROXY"] = proxy
-                    env_with_proxy["http_proxy"] = proxy
-                    env_with_proxy["https_proxy"] = proxy
-                    f, out_s = _run_yt_plan(f"WARP Rotated #{rot} + BGUtil PO-Token (fetch_pot=always)", False, primary_args, True, sock_timeout="8", proc_timeout=120)
+                    _set_proxy_env(proxy)
+                    warp_healthy = True
+                    f, out_s = _run_yt_plan(f"WARP Rotated #{rot} + BGUtil PO-Token (fetch_pot=always)", False, primary_args, True, sock_timeout="6", proc_timeout=35)
                     if f:
                         return f
-                else:
-                    break
-            else:
-                break
+                    if diag["geo_warp"]:
+                        break
+                    if "timed out" in out_s or not out_s:
+                        warp_healthy = False
 
-    # Phase B: Secondary yt-dlp plans (on cleanest WARP IP + fast Direct fallbacks)
+    # Phase B: Secondary yt-dlp plans (skipping broken WARP if all tunnels timed out)
     secondary_plans = []
-    if proxy:
-        secondary_plans.append(("WARP + BGUtil (tv_embedded/safari, fetch_pot=always)", False, ["--extractor-args", "youtube:player_client=tv_embedded,web_safari;fetch_pot=always", "--extractor-args", bgutil_arg], True, "8"))
+    if proxy and warp_healthy and not diag["geo_warp"]:
+        secondary_plans.append(("WARP + BGUtil (tv_embedded/safari, fetch_pot=always)", False, ["--extractor-args", "youtube:player_client=tv_embedded,web_safari;fetch_pot=always", "--extractor-args", bgutil_arg], True, "6"))
         if has_cookies:
-            secondary_plans.append(("WARP + BGUtil + Cookies", True, ["--extractor-args", "youtube:player_client=web,mweb;fetch_pot=always", "--extractor-args", bgutil_arg], True, "8"))
-        secondary_plans.append(("WARP Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True, "8"))
+            secondary_plans.append(("WARP + BGUtil + Cookies", True, ["--extractor-args", "youtube:player_client=web,mweb,tv_embedded;fetch_pot=always", "--extractor-args", bgutil_arg], True, "6"))
+        secondary_plans.append(("WARP Android/VisionOS client", False, ["--extractor-args", "youtube:player_client=default,-web,android", "--extractor-args", "youtube:player_skip=configs"], True, "6"))
 
-    secondary_plans.append(("Direct + BGUtil PO-Token (mweb/web, fetch_pot=always)", False, ["--extractor-args", "youtube:player_client=mweb,web,web_embedded;fetch_pot=always", "--extractor-args", bgutil_arg], False, "8"))
-    secondary_plans.append(("Direct + BGUtil PO-Token (tv_embedded/safari)", False, ["--extractor-args", "youtube:player_client=tv_embedded,web_safari;fetch_pot=always", "--extractor-args", bgutil_arg], False, "8"))
+    secondary_plans.append(("Direct + BGUtil PO-Token (mweb/web, fetch_pot=always)", False, ["--extractor-args", "youtube:player_client=mweb,web,web_embedded;fetch_pot=always", "--extractor-args", bgutil_arg], False, "6"))
+    secondary_plans.append(("Direct + BGUtil PO-Token (tv_embedded/safari)", False, ["--extractor-args", "youtube:player_client=tv_embedded,web_safari;fetch_pot=always", "--extractor-args", bgutil_arg], False, "6"))
+    if has_cookies:
+        secondary_plans.append(("Direct + BGUtil + Cookies", True, ["--extractor-args", "youtube:player_client=web,mweb,tv_embedded;fetch_pot=always", "--extractor-args", bgutil_arg], False, "6"))
 
     for plan_name, use_cookies, extra_args, use_proxy, sock_timeout in secondary_plans:
-        f, _ = _run_yt_plan(plan_name, use_cookies, extra_args, use_proxy, sock_timeout=sock_timeout, proc_timeout=90)
+        if use_proxy and not warp_healthy:
+            continue
+        f, out_s = _run_yt_plan(plan_name, use_cookies, extra_args, use_proxy, sock_timeout=sock_timeout, proc_timeout=35)
         if f:
             return f
+        # If both WARP and Direct confirm regional geo-restriction, fail fast with explicit country info
+        if diag["geo_direct"] and (diag["geo_warp"] or not proxy or not warp_healthy):
+            break
 
-    # Fallback: Native pytubefix v11 engine (bounded 15s socket timeout so it never hangs 12 minutes)
-    log("Invoking native pytubefix fallback engine (WEB/MWEB Auto-PO-Token + Adaptive Mux)...")
-    report_progress(60, "Downloading via high-speed native pytubefix engine...")
-    import socket as _socket
-    _prev_to = _socket.getdefaulttimeout()
-    _socket.setdefaulttimeout(15)
-    try:
-        from pytubefix import YouTube
-        pt_proxies = {"http": proxy, "https": proxy} if proxy else None
-        pt_clients = [("WEB", pt_proxies), ("WEB", None), ("MWEB", None)] if proxy else [("WEB", None), ("MWEB", None)]
-        max_h = 1080 if fmt in ("video-1080p", "video-best") else (720 if fmt == "video-720p" else (480 if fmt == "video-480p" else 360))
-        for pt_client, pt_p in pt_clients:
-            try:
-                yt = YouTube(url, client=pt_client, proxies=pt_p) if pt_p else YouTube(url, client=pt_client)
-                if is_audio:
-                    audio_stream = yt.streams.filter(only_audio=True).order_by('abr').desc().first()
-                    if audio_stream:
-                        temp_raw = output_dir / f"ptfix_raw_{clean_id}"
-                        audio_stream.download(output_path=str(output_dir), filename=temp_raw.name)
-                        subprocess.run([
-                            "ffmpeg", "-y", "-i", str(temp_raw),
-                            "-vn", "-ar", "44100", "-ac", "2", "-b:a", "192k",
-                            str(final_output_file)
-                        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        try: temp_raw.unlink()
-                        except Exception: pass
-                        if final_output_file.exists() and final_output_file.stat().st_size > 1000:
-                            log(f"SUCCESS with pytubefix ({pt_client}, Audio MP3): {final_output_file.name}")
-                            return final_output_file
-                else:
-                    adap_candidates = [
-                        s for s in yt.streams.filter(adaptive=True, only_video=True, file_extension='mp4').order_by('resolution').desc()
-                        if s.resolution and s.resolution.rstrip('p').isdigit() and int(s.resolution.rstrip('p')) <= max_h
-                    ]
-                    aud_s = yt.streams.filter(only_audio=True).order_by('abr').desc().first()
-                    if adap_candidates and aud_s:
-                        v_tmp = output_dir / f"pt_v_{clean_id}.mp4"
-                        a_tmp = output_dir / f"pt_a_{clean_id}.m4a"
-                        adap_candidates[0].download(output_path=str(output_dir), filename=v_tmp.name)
-                        aud_s.download(output_path=str(output_dir), filename=a_tmp.name)
-                        subprocess.run([
-                            "ffmpeg", "-y", "-i", str(v_tmp), "-i", str(a_tmp),
-                            "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart",
-                            str(final_output_file)
-                        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        for tf in (v_tmp, a_tmp):
-                            try:
-                                if tf.exists(): tf.unlink()
+    if not (diag["geo_direct"] and (diag["geo_warp"] or not warp_healthy)):
+        # Fallback: Native pytubefix v11 engine (bounded 25s socket timeout)
+        log("Invoking native pytubefix fallback engine (WEB/MWEB Auto-PO-Token + Adaptive Mux)...")
+        report_progress(60, "Downloading via high-speed native pytubefix engine...")
+        import socket as _socket
+        _prev_to = _socket.getdefaulttimeout()
+        _socket.setdefaulttimeout(25)
+        try:
+            from pytubefix import YouTube
+            pt_proxies = {"http": proxy, "https": proxy} if (proxy and warp_healthy) else None
+            pt_clients = [("WEB", pt_proxies), ("WEB", None), ("MWEB", None)] if pt_proxies else [("WEB", None), ("MWEB", None)]
+            max_h = 1080 if fmt in ("video-1080p", "video-best") else (720 if fmt == "video-720p" else (480 if fmt == "video-480p" else 360))
+            for pt_client, pt_p in pt_clients:
+                try:
+                    yt = YouTube(url, client=pt_client, proxies=pt_p) if pt_p else YouTube(url, client=pt_client)
+                    if is_audio:
+                        audio_stream = yt.streams.filter(only_audio=True).order_by('abr').desc().first()
+                        if audio_stream:
+                            temp_raw = output_dir / f"ptfix_raw_{clean_id}"
+                            audio_stream.download(output_path=str(output_dir), filename=temp_raw.name)
+                            subprocess.run([
+                                "ffmpeg", "-y", "-i", str(temp_raw),
+                                "-vn", "-ar", "44100", "-ac", "2", "-b:a", "192k",
+                                str(final_output_file)
+                            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            try: temp_raw.unlink()
                             except Exception: pass
-                        if final_output_file.exists() and final_output_file.stat().st_size > 1000:
-                            log(f"SUCCESS with pytubefix ({pt_client}, Adaptive {adap_candidates[0].resolution}): {final_output_file.name}")
-                            return final_output_file
+                            if final_output_file.exists() and final_output_file.stat().st_size > 1000:
+                                log(f"SUCCESS with pytubefix ({pt_client}, Audio MP3): {final_output_file.name}")
+                                return final_output_file
+                    else:
+                        adap_candidates = [
+                            s for s in yt.streams.filter(adaptive=True, only_video=True, file_extension='mp4').order_by('resolution').desc()
+                            if s.resolution and s.resolution.rstrip('p').isdigit() and int(s.resolution.rstrip('p')) <= max_h
+                        ]
+                        aud_s = yt.streams.filter(only_audio=True).order_by('abr').desc().first()
+                        if adap_candidates and aud_s:
+                            v_tmp = output_dir / f"pt_v_{clean_id}.mp4"
+                            a_tmp = output_dir / f"pt_a_{clean_id}.m4a"
+                            adap_candidates[0].download(output_path=str(output_dir), filename=v_tmp.name)
+                            aud_s.download(output_path=str(output_dir), filename=a_tmp.name)
+                            subprocess.run([
+                                "ffmpeg", "-y", "-i", str(v_tmp), "-i", str(a_tmp),
+                                "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart",
+                                str(final_output_file)
+                            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            for tf in (v_tmp, a_tmp):
+                                try:
+                                    if tf.exists(): tf.unlink()
+                                except Exception: pass
+                            if final_output_file.exists() and final_output_file.stat().st_size > 1000:
+                                log(f"SUCCESS with pytubefix ({pt_client}, Adaptive {adap_candidates[0].resolution}): {final_output_file.name}")
+                                return final_output_file
 
-                    video_stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-                    if not video_stream:
-                        video_stream = yt.streams.filter(file_extension='mp4').order_by('resolution').desc().first()
-                    if video_stream:
-                        out_path = video_stream.download(output_path=str(output_dir), filename=f"{clean_id}_OneForAllHub.mp4")
-                        f = Path(out_path)
-                        if f.exists() and f.stat().st_size > 1000:
-                            log(f"SUCCESS with pytubefix ({pt_client}, Video MP4): {f.name}")
-                            return f
-            except Exception as ce:
-                log(f"pytubefix ({pt_client}, proxy={bool(pt_p)}) note: {ce}")
-    except Exception as pfe:
-        log(f"pytubefix engine note: {pfe}")
-    finally:
-        _socket.setdefaulttimeout(_prev_to)
+                        video_stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+                        if not video_stream:
+                            video_stream = yt.streams.filter(file_extension='mp4').order_by('resolution').desc().first()
+                        if video_stream:
+                            out_path = video_stream.download(output_path=str(output_dir), filename=f"{clean_id}_OneForAllHub.mp4")
+                            f = Path(out_path)
+                            if f.exists() and f.stat().st_size > 1000:
+                                log(f"SUCCESS with pytubefix ({pt_client}, Video MP4): {f.name}")
+                                return f
+                except Exception as ce:
+                    _scan_yt_errors(str(ce), was_proxy=bool(pt_p))
+                    log(f"pytubefix ({pt_client}, proxy={bool(pt_p)}) note: {ce}")
+        except Exception as pfe:
+            log(f"pytubefix engine note: {pfe}")
+        finally:
+            _socket.setdefaulttimeout(_prev_to)
+
+    if diag["geo"]:
+        avail_txt = f" (Allowed regions: {diag['geo']})" if diag["geo"] and "specific" not in diag["geo"] else ""
+        set_error_reason("geo", f"🌍 <b>Geo-Restricted Video:</b> The uploader has blocked this video in the cloud server region (US){avail_txt}, so it cannot be downloaded from here.")
+    elif diag["age"]:
+        set_error_reason("age", "🔞 <b>Age-Restricted Video:</b> YouTube requires an 18+ age-verified account login to access this video, so automated bots cannot download it.")
+    elif diag["private"]:
+        set_error_reason("private", "🔒 <b>Private / Members-Only Video:</b> This YouTube video is private or restricted to channel members.")
 
     return None
 
@@ -2065,12 +2166,26 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: Optional
         env_with_proxy["https_proxy"] = proxy
         env_with_proxy["NO_PROXY"] = "127.0.0.1,localhost"
         env_with_proxy["no_proxy"] = "127.0.0.1,localhost"
+    clean_env = {k: v for k, v in os.environ.items() if not k.lower().endswith("proxy")}
 
-    for attempt, use_c in enumerate([True, False] if cookie_args else [False]):
-        log(f"Attempting general yt-dlp download (attempt={attempt+1}, use_cookies={use_c})...")
+    attempts = []
+    if cookie_args:
+        attempts.append((True, bool(proxy)))
+    if proxy:
+        attempts.append((False, True))
+    attempts.append((False, False))
+    if cookie_args and proxy:
+        attempts.append((True, False))
+
+    for attempt_idx, (use_c, use_p) in enumerate(attempts):
+        log(f"Attempting general yt-dlp download (attempt={attempt_idx+1}, cookies={use_c}, proxy={use_p})...")
         cmd = build_cmd(use_cookies=use_c)
+        if use_p and proxy:
+            cmd.insert(-1, "--proxy")
+            cmd.insert(-1, proxy)
+        plan_env = env_with_proxy if (use_p and proxy) else clean_env
         try:
-            code, out_str = run_ytdlp_with_progress(cmd, env_with_proxy, timeout=40, stage_label="Downloading media stream")
+            code, out_str = run_ytdlp_with_progress(cmd, plan_env, timeout=45, stage_label="Downloading media stream", max_timeout=240)
             log("yt-dlp output summary:\n" + out_str[-400:])
             f = get_latest_file(output_dir, prefer_video=not is_audio)
             if f and f.stat().st_size > 1000:
@@ -2079,12 +2194,14 @@ def download_general_ytdlp(url: str, output_dir: Path, fmt: str, proxy: Optional
                 set_error_reason("unsupported", "")
             elif "GeoRestrictedError" in out_str or "not made this video available in your country" in out_str:
                 set_error_reason("geo", "")
+            elif any(k in out_str for k in ("Sign in to confirm your age", "is age restricted")):
+                set_error_reason("age", "")
             elif any(k in out_str for k in ("HTTP Error 404", "Video unavailable", "has been removed", "does not exist")):
                 set_error_reason("unavailable", "")
             elif any(k in out_str for k in ("Private video", "login required", "Sign in to view")):
                 set_error_reason("private", "")
         except Exception as e:
-            log(f"General yt-dlp attempt {attempt+1} note: {e}")
+            log(f"General yt-dlp attempt {attempt_idx+1} note: {e}")
     return get_latest_file(output_dir, prefer_video=not is_audio)
 
 # =====================================================================
@@ -2184,7 +2301,7 @@ _ADULT_DOMAINS = {
     "motherless.com", "heavy-r.com", "sxyprn.com", "youjizz.com",
     "leakedzone.com", "desiwood.online", "tokyomotion.net", "thisvid.com",
     "porntube.com", "peekvids.com", "lobstertube.com",
-    "pimpbunny.com", "tranny.one", "tsplayground.com", "grooby.com",
+    "pimpbunny.com", "tranny.one", "tsplayground.com", "grooby.com", "nikalarab.com",
     "porniran.com", "shahvani.com", "iraniansex.com", "superirani.com",
     "persianporn.com", "sekshot.com",
 }
@@ -2194,7 +2311,7 @@ _ADULT_KEYWORDS = (
     "redgif", "erome", "brazzers", "xxx", "sexvid", "xvid", "javhd", "missav",
     "eporner", "beeg", "motherless", "fapello", "thothub", "leakedzone",
     "pimpbunny", "tranny", "camgirl", "livecam", "slut", "milf", "boobs",
-    "pussy", "shemale", "bdsm",
+    "pussy", "shemale", "bdsm", "nikalarab",
 )
 _NSFW_SUBREDDIT_KEYWORDS = (
     "nsfw", "porn", "redgif", "xxx", "hentai", "rule34", "gonewild", "realgirls",
@@ -2204,7 +2321,7 @@ _NSFW_SUBREDDIT_KEYWORDS = (
     "creampie", "escort",
 )
 _NSFW_EXACT_SUBS = {"sex", "ass", "anal", "cum", "dick", "cock", "tits", "boob", "fap", "leaks"}
-_ADULT_PATH_RE = re.compile(r"(?:^|[-_/])(?:porn|xxx|xnxx|xvideos|nude|naked|sexvideo|hentai|onlyfans|redgifs?|blowjob|handjob|gangbang|chudai|camgirl|brazzers|pussy|boobs)(?:[-_/]|$)", re.I)
+_ADULT_PATH_RE = re.compile(r"(?:^|[-_/])(?:porn|xxx|xnxx|xvideos|nude|naked|sexvideo|hentai|onlyfans|redgifs?|blowjob|handjob|gangbang|chudai|camgirl|brazzers|pussy|boobs|سكس|سكسي|سکس|سکسی|ميلف|كسم|كسها|نودز)(?:[-_/]|$)", re.I)
 
 def is_nsfw_url(check_url: str) -> bool:
     try:
@@ -2212,7 +2329,7 @@ def is_nsfw_url(check_url: str) -> bool:
         host = (parsed.hostname or "").lower()
         if host.startswith("www."):
             host = host[4:]
-        path = (parsed.path or "").lower()
+        path = urllib.parse.unquote(parsed.path or "").lower()
         if not host:
             return False
         if host == "reddit.com" or host.endswith(".reddit.com"):
@@ -2305,8 +2422,15 @@ def main():
     if (not target_file or not target_file.exists()) and ("spotify.com" in url or "spotify.link" in url or "spoti.fi" in url):
         target_file = download_spotify(url, output_dir, fmt, proxy=warp_proxy)
 
-    # Step 5: General yt-dlp Engine (SoundCloud, Vimeo, Twitch, Dailymotion, etc.)
-    if not target_file or not target_file.exists() or target_file.stat().st_size == 0:
+    # Step 5: General yt-dlp Engine (skip if dedicated engine already recorded a terminal geo/age/private/nsfw block)
+    _term_reason = ""
+    try:
+        _err_p = Path(os.environ.get("DL_ERROR_FILE", "/tmp/dl_error_reason.txt"))
+        if _err_p.exists():
+            _term_reason = _err_p.read_text(encoding="utf-8").split("|", 1)[0].strip()
+    except Exception:
+        pass
+    if (not target_file or not target_file.exists() or target_file.stat().st_size == 0) and _term_reason not in ("geo", "age", "private", "nsfw"):
         target_file = download_general_ytdlp(url, output_dir, fmt, proxy=warp_proxy)
 
     if not target_file or not target_file.exists() or target_file.stat().st_size < 1000:

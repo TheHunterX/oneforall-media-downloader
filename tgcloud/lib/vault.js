@@ -30,26 +30,41 @@ export async function dispatchCloudWorkflow({ url, format = 'video-720p', chatId
   if (!token) {
     throw new Error('Server vault token unavailable');
   }
-  const res = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/downloader.yml/dispatches`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/vnd.github.v3+json',
-      'Content-Type': 'application/json',
-      'User-Agent': 'OneForAllHubBot'
-    },
-    body: JSON.stringify({
-      ref: 'main',
-      inputs: {
-        url: String(url),
-        format: String(format),
-        chat_id: chatId ? String(chatId) : '',
-        message_id: messageId ? String(messageId) : '',
-        send_to_telegram: String(sendToTelegram)
-      }
-    })
+  const payloadStr = JSON.stringify({
+    ref: 'main',
+    inputs: {
+      url: String(url),
+      format: String(format),
+      chat_id: chatId ? String(chatId) : '',
+      message_id: messageId ? String(messageId) : '',
+      send_to_telegram: String(sendToTelegram)
+    }
   });
-  return res.ok || res.status === 204;
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/downloader.yml/dispatches`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'OneForAllHubBot'
+        },
+        body: payloadStr
+      });
+      if (res.ok || res.status === 204) {
+        return true;
+      }
+      lastErr = new Error(`GitHub dispatch HTTP ${res.status}`);
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+        throw lastErr;
+      }
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error('Cloud workflow dispatch failed');
 }
 
 const _urlCache = new Map();

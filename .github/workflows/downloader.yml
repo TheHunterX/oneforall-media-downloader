@@ -107,6 +107,8 @@ jobs:
           timeout 5 wgcf generate || true
           if [ -f wgcf-profile.conf ]; then
             sed -i 's/engage.cloudflareclient.com/162.159.192.1/g' wgcf-profile.conf || true
+            sed -i 's/^MTU = .*/MTU = 1280/g' wgcf-profile.conf || true
+            grep -q "^MTU" wgcf-profile.conf || sed -i '/^\[Interface\]/a MTU = 1280' wgcf-profile.conf || true
 
             cat << 'EOF' > wireproxy.conf
           WGConfig = ./wgcf-profile.conf
